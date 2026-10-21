@@ -4,10 +4,12 @@ robot:    "gantry" (simple, self-authored) or "panda" (Franka Panda from MuJoCo 
 physics:  "cpu" (one mujoco.MjData per env) or "warp" (MuJoCo Warp, nworld = n_envs).
 render:   "cpu" (mujoco.Renderer, OSMesa/EGL), "warp" (MuJoCo Warp batch ray tracer), or "none".
 
-Per control step, the env runs batched array code for occluder placement, coverage,
-success and IK on either backend. There are no per-env host kinematics calls on the Warp
-path. It reads back only the small arrays policies and scoring need (qpos, cube/tcp/camera
-poses, tcp Jacobian) and pushes ctrl + mocap. Images stay on the device until ``obs`` is built.
+On the Warp path (default ``device_ops=True``) occluder placement, calibration, per-step
+coverage and success run as Warp kernels (``occlubench.warp_ops``) that read poses from and
+write the occluder mocap pose into MuJoCo Warp Data; that state reaches the host only when
+``success_step``/``coverage_stats()``/``info`` values are read. IK is still host-side NumPy,
+so each step still reads qpos, tcp pose and the tcp Jacobian and pushes ctrl. The CPU path
+(and ``device_ops=False``) uses the NumPy reference in ``occlubench.geometry``.
 
 Policies see only RGB from the ``third_person`` and ``wrist`` cameras plus proprioception.
 ``env.privileged()`` is for the scripted oracle and for scoring only.
@@ -16,7 +18,7 @@ Policies see only RGB from the ``third_person`` and ``wrist`` cameras plus propr
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import mujoco
 import numpy as np
@@ -121,10 +123,11 @@ class _WarpBackend:
             self._assign("act", np.stack([d.act for d in datas]))
         self.d.time.zero_()
 
-    def write(self, ctrl, mocap_pos, mocap_quat):
+    def write(self, ctrl, mocap_pos=None, mocap_quat=None):
         self._assign("ctrl", ctrl)
-        self._assign("mocap_pos", mocap_pos)
-        self._assign("mocap_quat", mocap_quat)
+        if mocap_pos is not None:  # None when the occluder pose is written on-device (warp_ops)
+            self._assign("mocap_pos", mocap_pos)
+            self._assign("mocap_quat", mocap_quat)
 
     def step(self, substeps):
         for _ in range(substeps):
@@ -155,6 +158,24 @@ class _WarpBackend:
         )
 
 
+class _LazyInfo(Mapping):
+    """Step info whose device-resident values are copied to the host only when read."""
+
+    def __init__(self, **getters):
+        self._g, self._v = getters, {}
+
+    def __getitem__(self, k):
+        if k not in self._v:
+            self._v[k] = self._g[k]()
+        return self._v[k]
+
+    def __iter__(self):
+        return iter(self._g)
+
+    def __len__(self):
+        return len(self._g)
+
+
 class OccluEnv:
     def __init__(
         self,
@@ -165,6 +186,7 @@ class OccluEnv:
         render: str = "cpu",
         robot: str = "gantry",
         substeps: int = 10,
+        device_ops: bool | None = None,
     ):
         self.n, self.horizon, self.substeps = n_envs, horizon, substeps
         self.h, self.w = image_size
@@ -175,6 +197,17 @@ class OccluEnv:
         self.fovy = np.array([self.m.cam_fovy[self.ids.cams[c]] for c in CAMERAS])
         self.conditions: list[Condition] = [CLEAN] * n_envs
         self.backend = _WarpBackend(self) if physics == "warp" else _CpuBackend(self)
+        # Occluder placement, coverage and success: Warp kernels on the Warp path (default),
+        # NumPy reference otherwise. ``device_ops=False`` forces the NumPy fallback.
+        if device_ops is None:
+            device_ops = physics == "warp"
+        if device_ops and physics != "warp":
+            raise ValueError("device_ops=True requires physics='warp'")
+        self._dev = None
+        if device_ops:
+            from occlubench.warp_ops import DeviceOccluder
+
+            self._dev = DeviceOccluder(self, self.backend.d)
         self._renderer = mujoco.Renderer(self.m, self.h, self.w) if render == "cpu" else None
         self._host = None  # host MjData mirror used only for CPU rendering on the Warp path
         self._rc = None
@@ -207,7 +240,7 @@ class OccluEnv:
         self.severity = np.array([x.severity for x in c])
         self.world_anchor = np.array([x.anchor == "world" for x in c])
         self.t = 0
-        self.success_step = np.full(self.n, -1)
+        self._success_step = np.full(self.n, -1)
         self._hold_lat = np.zeros(self.n)
         self._anchor_pos = np.zeros((self.n, 3))
         self._anchor_rot = np.tile(np.eye(3), (self.n, 1, 1))
@@ -235,6 +268,16 @@ class OccluEnv:
         self.goal = datas[0].site_xpos[self.ids.goal_site].copy()
         self.backend.load(datas)
         self.state = self.backend.refresh(self.robot.needs_jacobian)
+        if self._dev is not None:
+            self._dev.reset(
+                self.cam_idx,
+                self.clean_mask,
+                self.onset_step,
+                self.hold_steps,
+                self.severity,
+                self.world_anchor,
+                self.goal,
+            )
         return self._obs()
 
     # ------------------------------------------------------------------ occluder (vectorised)
@@ -326,7 +369,16 @@ class OccluEnv:
         self._cov_max[a] = np.maximum(self._cov_max[a], both[a])
         self._cov_cnt[a] += 1
 
+    @property
+    def success_step(self) -> np.ndarray:
+        """Control step of first success per env, -1 if never (host copy)."""
+        if self._dev is not None:
+            return self._dev.success_step.numpy().astype(int)
+        return self._success_step
+
     def coverage_stats(self) -> dict:
+        if self._dev is not None:
+            return self._dev.stats()
         cnt = np.maximum(self._cov_cnt, 1)[:, None]
         mean = np.where(self._cov_cnt[:, None] > 0, self._cov_sum / cnt, np.nan)
         mx = np.where(self._cov_cnt[:, None] > 0, self._cov_max, np.nan)
@@ -341,19 +393,34 @@ class OccluEnv:
     # ------------------------------------------------------------------ step
     def step(self, action: np.ndarray):
         """Action shape (N, robot.action_dim); see occlubench.robots."""
-        self._place_occluders()
-        self._measure_coverage()
         st = self.state
+        if self._dev is not None:
+            self._dev.place(self.t)  # writes occluder mocap into Warp Data, accumulates coverage
+        else:
+            self._place_occluders()
+            self._measure_coverage()
         self.ctrl = self.robot.ctrl(action, st["qpos"], st["tcp_pos"], st["tcp_mat"], st["jac"])
-        self.backend.write(self.ctrl, self.mocap_pos, self.mocap_quat)
+        if self._dev is not None:
+            self.backend.write(self.ctrl)
+        else:
+            self.backend.write(self.ctrl, self.mocap_pos, self.mocap_quat)
         self.backend.step(self.substeps)
         self.state = self.backend.refresh(self.robot.needs_jacobian)
         self.t += 1
-        succ = is_success(self.state["cube_pos"], self.goal)
-        newly = succ & (self.success_step < 0)
-        self.success_step[newly] = self.t
         done = self.t >= self.horizon
-        info = dict(success=succ, ever_success=self.success_step >= 0, occluder_active=self._active.copy())
+        if self._dev is not None:
+            self._dev.score(self.t)
+            dev = self._dev
+            info = _LazyInfo(
+                success=lambda: dev.success.numpy().astype(bool),
+                ever_success=lambda: dev.success_step.numpy() >= 0,
+                occluder_active=lambda: dev.active.numpy().astype(bool),
+            )
+            return self._obs(), done, info
+        succ = is_success(self.state["cube_pos"], self.goal)
+        newly = succ & (self._success_step < 0)
+        self._success_step[newly] = self.t
+        info = dict(success=succ, ever_success=self._success_step >= 0, occluder_active=self._active.copy())
         return self._obs(), done, info
 
     # ------------------------------------------------------------------ obs
@@ -390,9 +457,12 @@ class OccluEnv:
         datas = getattr(self.backend, "datas", None)
         if datas is None:  # Warp physics + CPU render: mirror qpos into a host MjData
             datas = self._mirror()
+        mp, mq = self.mocap_pos, self.mocap_quat
+        if self._dev is not None:  # occluder pose lives on the device; host renderer needs it
+            mp, mq = self.backend.d.mocap_pos.numpy(), self.backend.d.mocap_quat.numpy()
         for i, d in enumerate(datas):
-            d.mocap_pos[:] = self.mocap_pos[i]
-            d.mocap_quat[:] = self.mocap_quat[i]
+            d.mocap_pos[:] = mp[i]
+            d.mocap_quat[:] = mq[i]
             mujoco.mj_kinematics(self.m, d)
             mujoco.mj_camlight(self.m, d)
             for c in CAMERAS:

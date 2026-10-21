@@ -49,4 +49,4 @@ jobs:
         with: { python-version: "3.12" }
       - run: sudo apt-get update && sudo apt-get install -y libosmesa6
       - run: pip install -e ".[dev,warp]"
-      - run: pytest -q tests/test_warp_backend.py
+      - run: pytest -q tests/test_warp_backend.py tests/test_warp_ops.py
