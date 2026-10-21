@@ -1,0 +1,65 @@
+<!-- OccluBench v0 tabletop scene. Self-authored (MIT, see LICENSE). -->
+<mujoco model="occlubench_tabletop">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic" impratio="10"/>
+  <visual>
+    <global offwidth="640" offheight="480"/>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6"/>
+  </visual>
+  <default>
+    <geom solref="0.004 1" solimp="0.95 0.99 0.001" friction="1.2 0.02 0.001"/>
+    <default class="visual"><geom contype="0" conaffinity="0" group="1"/></default>
+  </default>
+  <worldbody>
+    <light pos="0 0 2.0" dir="0 0 -1" diffuse="0.7 0.7 0.7"/>
+    <geom name="floor" type="plane" size="2 2 0.05" rgba="0.35 0.35 0.38 1"/>
+    <geom name="table" type="box" pos="0 0 0.38" size="0.45 0.45 0.02" rgba="0.62 0.5 0.36 1"/>
+    <site name="goal" pos="0.18 0.15 0.401" size="0.005" rgba="0 0 0 0"/>
+    <geom name="goal_marker" class="visual" type="cylinder" pos="0.18 0.15 0.4005" size="0.06 0.0006" rgba="0.2 0.8 0.3 1"/>
+    <camera name="third_person" pos="0.0 -0.6 0.95" xyaxes="1 0 0 0 0.7 0.714" fovy="50"/>
+
+    <!-- Cartesian gantry arm: x/y/z slides + two-finger parallel gripper. -->
+    <body name="gantry" pos="0 0 0.75">
+      <inertial pos="0 0 0" mass="1" diaginertia="0.01 0.01 0.01"/>
+      <joint name="arm_x" type="slide" axis="1 0 0" range="-0.35 0.35" damping="40"/>
+      <body name="carriage_y">
+        <inertial pos="0 0 0" mass="1" diaginertia="0.01 0.01 0.01"/>
+        <joint name="arm_y" type="slide" axis="0 1 0" range="-0.35 0.35" damping="40"/>
+        <body name="hand">
+          <joint name="arm_z" type="slide" axis="0 0 1" range="-0.33 0.05" damping="40"/>
+          <geom name="hand_geom" type="box" size="0.035 0.05 0.015" rgba="0.15 0.15 0.18 1" mass="0.6"/>
+          <geom class="visual" type="cylinder" fromto="0 0 0.015 0 0 0.3" size="0.012" rgba="0.5 0.5 0.55 1"/>
+          <camera name="wrist" pos="0 -0.065 -0.01" xyaxes="1 0 0 0 0.97 0.26" fovy="80"/>
+          <site name="tcp" pos="0 0 -0.07" size="0.005"/>
+          <body name="finger_l" pos="0 0.03 -0.045">
+            <joint name="finger_l" type="slide" axis="0 1 0" range="-0.028 0.012" damping="5"/>
+            <geom name="finger_l_geom" type="box" size="0.012 0.006 0.03" rgba="0.8 0.8 0.85 1" mass="0.05" friction="2 0.05 0.001"/>
+          </body>
+          <body name="finger_r" pos="0 -0.03 -0.045">
+            <joint name="finger_r" type="slide" axis="0 -1 0" range="-0.028 0.012" damping="5"/>
+            <geom name="finger_r_geom" type="box" size="0.012 0.006 0.03" rgba="0.8 0.8 0.85 1" mass="0.05" friction="2 0.05 0.001"/>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <body name="cube" pos="-0.12 -0.08 0.42">
+      <freejoint name="cube"/>
+      <geom name="cube_geom" type="box" size="0.02 0.02 0.02" rgba="0.85 0.1 0.1 1" mass="0.05" friction="1.5 0.05 0.001"/>
+    </body>
+
+    <!-- Physical occluder: mocap body with no collision. Rendered by every camera. -->
+    <body name="occluder" mocap="true" pos="0 0 3">
+      <geom name="occluder_geom" type="box" size="0.06 0.06 0.003" rgba="0.55 0.55 0.6 1" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+  <equality>
+    <joint joint1="finger_l" joint2="finger_r" polycoef="0 1 0 0 0"/>
+  </equality>
+  <actuator>
+    <position name="act_x" joint="arm_x" kp="800" ctrlrange="-0.35 0.35"/>
+    <position name="act_y" joint="arm_y" kp="800" ctrlrange="-0.35 0.35"/>
+    <position name="act_z" joint="arm_z" kp="1200" ctrlrange="-0.33 0.05"/>
+    <position name="act_grip" joint="finger_l" kp="500" ctrlrange="-0.028 0.012" forcerange="-40 40"/>
+  </actuator>
+</mujoco>

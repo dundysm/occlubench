@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "occlubench"
+version = "0.0.1"
+description = "GPU-native benchmark for VLA robustness to moving physical occluders (MuJoCo Warp)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Dundy Pasupuleti" }]
+dependencies = ["mujoco>=3.3", "numpy>=1.24"]
+
+[project.optional-dependencies]
+warp = ["mujoco-warp", "warp-lang"]
+dev = ["pytest>=8", "ruff>=0.6", "pillow"]
+
+[project.urls]
+Homepage = "https://github.com/dundysm/occlubench"
+
+[tool.setuptools.packages.find]
+include = ["occlubench*"]
+
+[tool.setuptools.package-data]
+occlubench = ["assets/*.xml"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B905", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
