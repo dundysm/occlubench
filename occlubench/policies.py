@@ -75,18 +75,31 @@ class _PickPlaceScript:
 
 class ScriptedOracle:
     uses_privileged_state = True
+    drop_dist = 0.05  # cube further than this from the tcp while carrying -> re-grasp
 
     def reset(self, n: int):
         self.script = _PickPlaceScript(n)
+        self._yaw = np.zeros(n)
 
     def act(self, obs, env):
         self.script.carry_scale = env.robot.carry_scale
         st = env.privileged()
         tcp = obs["proprio"][:, :3]
+        # Safety net: re-grasp if the cube ever slips out of the hand while carrying; with
+        # privileged state the oracle can simply start the pick again.
+        sc = self.script
+        dropped = np.isin(sc.phase, (3, 4, 5)) & (np.linalg.norm(st["cube_pos"] - tcp, axis=1) > self.drop_dist)
+        sc.phase[dropped], sc.timer[dropped] = 0, 0
         # Grasp yaw aligned with the cube (square cube: symmetric under 90 degrees).
         m = st["cube_mat"]
         yaw = np.arctan2(m[:, 1, 0], m[:, 0, 0])
         yaw = (yaw + np.pi / 4) % (np.pi / 2) - np.pi / 4
+        # Latch the grasp yaw once the fingers start closing. Re-reading it from the cube while
+        # carrying let a small in-hand rotation cross the +-45 degree wrap, which snapped the
+        # commanded yaw by 90 degrees mid-carry and shook the cube loose (the 2/64 Panda failures in v0.2).
+        track = np.isin(self.script.phase, (0, 1))
+        self._yaw[track] = yaw[track]
+        yaw = self._yaw
         return self.script.act(tcp, st["cube_pos"], st["goal_pos"], np.ones(len(tcp), bool), env.robot, yaw)
 
 

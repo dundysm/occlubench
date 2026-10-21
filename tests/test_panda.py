@@ -38,15 +38,15 @@ def test_panda_ik_reaches_pose():
 
 
 def test_panda_oracle_solves_task():
-    n = 16
+    n = 24
     env = OccluEnv(n_envs=n, robot="panda", render="none", horizon=200)
-    obs = env.reset(list(range(n)))
+    obs = env.reset(list(range(30, 30 + n)))  # includes seeds 38 and 41 (failed in v0.2)
     pol = ScriptedOracle()
     pol.reset(n)
     done = False
     while not done:
         obs, done, _ = env.step(pol.act(obs, env))
-    assert (env.success_step >= 0).mean() >= 0.9
+    assert (env.success_step >= 0).all()
     env.close()
 
 
