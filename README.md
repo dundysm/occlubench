@@ -7,14 +7,17 @@ simulated object (a mocap plate, rendered by every camera) slides into the line 
 fraction of the task object, holds, and slides out. Every perturbed rollout is paired with a clean rollout from the
 identical initial state, and results are reported with bootstrap 95% confidence intervals.
 
-> **Status: v0 scaffold.** The task, occluder, condition grid, paired runner, metrics, two reference policies and CPU tests
-> work. The MuJoCo Warp backend runs (tested on Warp's CPU device) but has not yet been benchmarked on an NVIDIA GPU, and no
-> VLA has been evaluated yet. See [Roadmap](#roadmap).
+> **Status: v0.2.** Two robots: the Franka Panda from MuJoCo Menagerie (fetched at runtime) and a simple gantry. Occluder
+> placement, coverage, success and IK are batched across envs. The Warp backend is tested against CPU MuJoCo on Warp's CPU
+> device. **No NVIDIA GPU numbers yet**: run [`scripts/brev_run.sh`](#gpu-runs-nvidia-brev-h100--a100) to produce
+> them. No VLA has been evaluated yet. See [Roadmap](#roadmap).
 
 ![clean vs occluded](docs/images/grid.png)
 
-*Rows: clean; third-person 50% target (75% achieved at 64px coverage resolution); third-person 100%; wrist 100%.
-Left: third-person camera. Right: wrist camera. CPU renderer.*
+![Panda clean vs occluded](docs/images/grid_panda.png)
+
+*Rows: clean; third-person 50%; third-person 100%; wrist 100%. Left: third-person camera. Right: wrist camera. CPU
+renderer. Top: gantry. Bottom: Franka Panda.*
 
 ## Why this benchmark
 
@@ -44,6 +47,21 @@ Most VLA benchmarks already feed policies cameras plus proprioception, so "camer
 
 "—" means not characterised here. These rows summarise each paper as we read it; corrections are welcome via issues.
 
+## Robots
+
+| `robot=` | Model | Action `(N, dim)` | Notes |
+|---|---|---|---|
+| `"panda"` | Franka Emika Panda from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie/tree/main/franka_emika_panda), **Apache-2.0**, fetched at runtime and not vendored | 7: tcp xyz + roll/pitch/yaw (world, rad; `(pi, 0, yaw)` = gripper down) + grip in [-1, 1] | Batched damped-least-squares IK to the 7 joint position actuators, with a null-space posture term. The Menagerie gripper actuator is unchanged. |
+| `"gantry"` (default) | Self-authored Cartesian x/y/z gantry with a parallel gripper | 4: tcp xyz + grip | Fast and simple; used by the CPU CI tests. |
+
+The Panda is fetched on first use: a sparse git checkout of Menagerie at a pinned commit (`occlubench/menagerie.py`) into
+`~/.cache/occlubench` (override with `$OCCLUBENCH_CACHE`). Set `$OCCLUBENCH_MENAGERIE` to use an existing checkout. Run
+`python -m occlubench.menagerie` to prefetch. The Menagerie LICENSE file is fetched with the model.
+
+Proprioception: gantry `(N, 5)` = tcp xyz, finger opening, grip command. Panda `(N, 12)` = the same plus 7 joint angles.
+
+Scripted oracle success rates: gantry 64/64; Panda 62/64 (`tests/test_panda.py` asserts ≥ 90%).
+
 ## Install
 
 ```bash
@@ -70,26 +88,32 @@ Or from the command line: `python scripts/run_grid.py --policy colorcue --seeds 
 
 ### Environment API
 
-* `OccluEnv(n_envs, horizon=200, image_size=(96, 96), physics="cpu"|"warp", render="cpu"|"warp"|"none")`
+* `OccluEnv(n_envs, horizon=200, image_size=(96, 96), physics="cpu"|"warp", render="cpu"|"warp"|"none", robot="gantry"|"panda")`
 * `reset(seeds, conditions)` → `obs`; `step(actions)` → `obs, done, info`
 * `obs["rgb"]["third_person"]`, `obs["rgb"]["wrist"]`: `(N, H, W, 3)` uint8. `obs["proprio"]`: `(N, 5)` tcp xyz, finger
   opening, grip command.
-* Action `(N, 4)`: absolute tcp target `(x, y, z)` in metres plus grip in `[-1, 1]` (+1 closes).
+* Action: see [Robots](#robots). `env.robot.default_action(xyz, grip, yaw)` builds one for either robot.
 * `info["success"]`: the cube rests within 5 cm of the goal centre. `env.success_step` records the first success step.
 * `env.privileged()` returns ground-truth state, for the scripted oracle and for scoring only. Submissions must not use it.
 * `env.camera_calibration(cam)` returns intrinsics and extrinsics, as a calibrated real rig would provide.
 
 ### Conditions
 
-`Condition(camera, severity, onset, duration)`:
+`Condition(camera, severity, onset, duration, anchor="camera"|"world")`:
 
 * `camera`: `"third_person"`, `"wrist"`, or `"none"` (clean).
 * `severity`: target fraction of task-object pixels hidden in that camera.
 * `onset`, `duration`: fractions of the horizon.
+* `anchor`: `"camera"` re-aligns the occluder to the camera→object ray every step, so target-camera severity stays
+  constant. `"world"` freezes its pose in the world at onset.
 
-The occluder slides in over 8 control steps, holds for `duration`, and slides out. The achieved coverage is recorded per
-episode. Coverage is measured with segmentation renders at 64×64 by default, so achieved values are quantised (for
-example, a 50% target can land at 75%).
+The occluder slides in over 8 control steps, holds for `duration`, and slides out.
+
+Severity is calibrated at onset by a batched bisection on the lateral offset. Coverage uses a vectorised geometric
+estimator (`occlubench/geometry.py`). It casts rays from the camera to cube-surface samples, weights them by projected
+area, and tests them against the occluder plate, for all envs at once on either backend. It agrees with CPU segmentation
+renders to within 0.08 (`tests/test_geometry.py`, typically within 0.04). Coverage is tracked in **both** cameras on every
+step the occluder is in the scene. See [docs/leakage_analysis.md](docs/leakage_analysis.md) for why that matters.
 
 ### Metrics (per condition, 95% percentile bootstrap over seeds)
 
@@ -98,12 +122,13 @@ example, a 50% target can land at 75%).
 | `paired_drop` | mean(clean success − perturbed success) over paired seeds |
 | `conditional_success` | P(perturbed success \| clean success) (MAIL-Bench-style) |
 | `recovery_steps` | mean extra steps to success (perturbed − clean) when both succeed |
-| `coverage`, `coverage_other` | achieved hidden fraction in the targeted camera, and leakage into the other camera |
+| `coverage`, `coverage_other` | mean hidden fraction while the occluder is in the scene, in the targeted camera and (leakage) in the other camera |
+| `coverage_other_max`, `coverage_onset` | worst-step leakage; target-camera coverage at onset (the calibrated value) |
 
 ## Reference policies
 
-* `ScriptedOracle` uses privileged state. It is blind to occlusion by construction, so its paired drop should be 0. It is
-  a pipeline check, not a baseline. It solved 32/32 seeds in a local check; the tests assert 4/4.
+* `ScriptedOracle` uses privileged state, including cube yaw for aligning the grasp. It is blind to occlusion by
+  construction, so its paired drop should be 0. It is a pipeline check, not a baseline.
 * `ColorCuePolicy` uses pixels and proprioception only, and is not learned. It finds the red cube in one camera by colour
   thresholding and back-projection, then runs a pick-and-place script. With `memory=False` it waits while the cube is
   hidden. It gives the grid a non-trivial signal on CPU.
@@ -112,54 +137,73 @@ example, a 50% target can land at 75%).
 
 ## GPU runs (NVIDIA Brev, H100 / A100)
 
+On a fresh NVIDIA Brev H100 80GB or A100 80GB instance (Ubuntu + NVIDIA driver):
+
 ```bash
-# on an NVIDIA Brev H100 80GB or A100 80GB instance (Ubuntu + CUDA driver)
 git clone https://github.com/dundysm/occlubench && cd occlubench
-pip install -e ".[dev,warp]"
-python scripts/smoke_test.py --n-envs 64 128 256 512 --physics warp --render warp --image 128 128
-nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv
+bash scripts/brev_run.sh
+# -> results/brev_<UTC timestamp>/results.md and results.json  (paste these back)
 ```
 
-`smoke_test.py` prints env-steps/s, host peak RSS and GPU memory for each `n_envs`. Measured on a CPU-only box:
-~23 env-steps/s with CPU rendering at 96×96 (two cameras), and ~320 env-steps/s for physics only. No GPU numbers have been
-measured yet.
+The script does the following:
 
-Known v0 limitations of the Warp path:
+* creates `.venv` and runs `pip install -e ".[dev,warp]"`
+* prints the GPU, MuJoCo and Warp versions, and prefetches the Panda
+* runs `scripts/smoke_test.py` at 64/128/256/512 envs (128×128, both cameras, Warp physics and Warp batch renderer) for
+  both robots
+* runs a small paired grid (ColorCue, gantry, 256 seeds × 8 conditions)
+* writes JSON and Markdown
 
-* State is mirrored to the host every control step, for occluder placement and success checks. This is correct but not yet
-  fast.
-* Coverage calibration uses the CPU segmentation renderer.
-* The Warp ray tracer does not draw sites or shadows like the CPU renderer does.
+Overrides: `ROBOT=panda`, `ENVS="256 1024"`, `IMAGE="96 96"`, `GRID_SEEDS=1024`.
 
-Moving these onto the device is the first GPU milestone.
+What runs where on the Warp path, per control step:
+
+* **Physics and rendering stay on the device.** The env runs `mjw.step` × substeps, then `mjw.kinematics`, `camlight`,
+  `com_pos`, and `jac` at the tcp.
+* **Small state arrays come back to the host:** qpos, the cube, tcp and camera poses, and the tcp Jacobian (Panda only).
+  There are no per-env host kinematics calls. Occluder placement, coverage, success and IK are batched numpy on those
+  arrays.
+* **ctrl and mocap go back to the device.**
+* **Images are copied to the host only when observations are built**, because policies currently run on the host.
+  On-device policies (for example torch over DLPack) and Warp kernels for the occluder/IK step are next.
+
+Measured on a CPU-only box (no GPU), CPU backend: gantry ~23 env-steps/s with two 96×96 CPU-rendered cameras. Physics
+only: gantry ~1,000 env-steps/s and Panda ~3,400 env-steps/s at 64 envs. CPU OSMesa rendering of the Panda meshes is
+slow (~4 env-steps/s). No GPU numbers have been measured yet.
 
 ## Scene
 
-`occlubench/assets/tabletop.xml` is self-authored and MIT-licensed. It contains:
+`occlubench/assets/scene_base.xml` (self-authored, MIT) contains:
 
-* a Cartesian x/y/z gantry with a two-finger parallel gripper (a simple arm, not a real robot model)
-* a red 4 cm cube with a seeded pose and a green goal disc on a table
-* a fixed `third_person` camera and a `wrist` camera mounted on the hand
+* a table with a red 4 cm cube (seeded pose) and a green goal disc
+* a fixed `third_person` camera
 * a collision-free mocap occluder plate
 
-No third-party assets are vendored. A Franka/Panda variant using MuJoCo Menagerie as a fetched dependency is on the roadmap.
+The robot is attached with `MjSpec.attach` at load time. It is either `assets/gantry.xml` (self-authored) or the Menagerie
+Panda, which gets a tcp site and a `wrist` camera added to its hand at runtime. No third-party assets are vendored.
+
+Known quirk: with `MUJOCO_GL=osmesa`, creating CPU renderers for two *different* models in one process can return
+garbage. The Panda tests therefore run in a separate pytest invocation.
 
 ## Development
 
 ```bash
-MUJOCO_GL=osmesa pytest -q      # 19 tests; the Warp test runs if mujoco-warp is installed (CPU device is fine)
+MUJOCO_GL=osmesa pytest -q                      # gantry + Warp-backend tests (Warp runs on its CPU device)
+MUJOCO_GL=osmesa pytest -q -m panda -o addopts=  # Panda tests, separate process (fetches Menagerie)
 ruff check . && ruff format --check .
 python scripts/render_docs.py   # regenerates docs/images
 ```
 
-CI (GitHub Actions) runs ruff and the CPU tests on every PR. Example CPU grid output: [docs/results_v0_cpu.md](docs/results_v0_cpu.md).
+CI (GitHub Actions) runs ruff, the CPU tests, the Panda tests and the Warp-backend tests (on Warp's CPU device) on every PR. Example CPU grid output: [docs/results_v0_cpu.md](docs/results_v0_cpu.md).
 
 ## Roadmap
 
-- [ ] **v0.1 GPU path:** keep occluder placement, coverage (Warp segmentation) and success on device. Benchmark H100/A100
-      throughput and memory against `n_envs` and resolution.
-- [ ] **Realistic embodiment:** Franka Panda (Menagerie, fetched) with an OSC controller; LIBERO-style tasks (pick-place,
-      drawer, stacking).
+- [x] v0.2: batched occluder, coverage, success and IK; no per-env host kinematics on the Warp path; Menagerie Panda with
+      IK; per-step leakage tracking; `brev_run.sh`.
+- [ ] **GPU numbers:** run `brev_run.sh` on an H100/A100 and publish throughput and memory against `n_envs` and resolution.
+- [ ] **Fully on-device step:** Warp kernels for the occluder, coverage and IK; on-device policies via DLPack; optional
+      Warp-segmentation coverage.
+- [ ] **More tasks:** LIBERO-style tasks for the Panda (drawer, stacking); joint torque or OSC control modes.
 - [ ] **Occluder families:** world-fixed occluders (for example a person or arm passing by), moving clutter, and partial
       transparency. Static (LIBERO-Occ-style) and dropout (MAIL-Bench-style) controls are included for comparison.
 - [ ] **Demos:** a GPU scripted-demo generator, including occlusion-during-demo variants, exported to LeRobot/RLDS.
