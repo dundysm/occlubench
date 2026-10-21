@@ -44,7 +44,14 @@ def gpu_mem_mib():
 
 
 def run(n, args):
-    env = OccluEnv(n_envs=n, horizon=args.steps, image_size=tuple(args.image), physics=args.physics, render=args.render)
+    env = OccluEnv(
+        n_envs=n,
+        horizon=args.steps,
+        image_size=tuple(args.image),
+        physics=args.physics,
+        render=args.render,
+        robot=args.robot,
+    )
     cond = Condition(camera="third_person", severity=0.5, onset=0.2, duration=0.3)
     obs = env.reset(list(range(n)), [cond] * n)
     pol = ScriptedOracle()
@@ -59,6 +66,7 @@ def run(n, args):
     dt = time.perf_counter() - t0
     env.close()
     return dict(
+        robot=args.robot,
         n_envs=n,
         physics=args.physics,
         render=args.render,
@@ -78,6 +86,7 @@ def main():
     p.add_argument("--render", choices=["cpu", "warp", "none"], default="cpu")
     p.add_argument("--image", type=int, nargs=2, default=[96, 96])
     p.add_argument("--steps", type=int, default=50)
+    p.add_argument("--robot", choices=["gantry", "panda"], default="gantry")
     args = p.parse_args()
     for n in args.n_envs:
         print(json.dumps(run(n, args)))

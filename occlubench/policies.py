@@ -16,30 +16,31 @@ import numpy as np
 from occlubench.scene import CUBE_HALF, TABLE_TOP_Z
 
 APPROACH_H = 0.12
-LIFT_Z = 0.62
+LIFT_Z = 0.58
 PLACE_Z = TABLE_TOP_Z + CUBE_HALF + 0.03
-GRASP_Z = TABLE_TOP_Z + CUBE_HALF + 0.004
+CUBE_Z = TABLE_TOP_Z + CUBE_HALF  # grasp height = CUBE_Z + robot.grasp_dz
 
 
 class _PickPlaceScript:
     """Phase machine shared by the scripted policies. Phases advance when the tcp arrives."""
 
-    def __init__(self, n: int, tol: float = 0.012, max_step: float = 0.03):
-        self.n, self.tol, self.max_step = n, tol, max_step
+    def __init__(self, n: int, tol: float = 0.012, max_step: float = 0.03, carry_scale: float = 1.0):
+        self.n, self.tol, self.max_step, self.carry_scale = n, tol, max_step, carry_scale
         self.phase = np.zeros(n, int)
         self.timer = np.zeros(n, int)
 
-    def act(self, tcp, cube, goal, cube_known):
+    def act(self, tcp, cube, goal, cube_known, robot, yaw=None):
         acts = np.zeros((self.n, 4))
+        grasp_z = CUBE_Z + robot.grasp_dz
         for i in range(self.n):
             p, c, g = self.phase[i], cube[i], goal[i]
             grip = -1.0
             if p == 0:  # above cube
                 tgt = np.array([c[0], c[1], c[2] + APPROACH_H]) if cube_known[i] else tcp[i]
             elif p == 1:  # descend
-                tgt = np.array([c[0], c[1], GRASP_Z])
+                tgt = np.array([c[0], c[1], grasp_z])
             elif p == 2:  # close
-                tgt, grip = np.array([c[0], c[1], GRASP_Z]), 1.0
+                tgt, grip = np.array([c[0], c[1], grasp_z]), 1.0
             elif p == 3:  # lift
                 tgt, grip = np.array([tcp[i][0], tcp[i][1], LIFT_Z]), 1.0
             elif p == 4:  # over goal
@@ -50,7 +51,8 @@ class _PickPlaceScript:
                 tgt = np.array([g[0], g[1], LIFT_Z])
             step = tgt - tcp[i]
             nrm = np.linalg.norm(step)
-            cmd = tcp[i] + step * min(1.0, self.max_step / nrm) if nrm > 1e-9 else tgt
+            lim = self.max_step * (self.carry_scale if p in (3, 4, 5) else 1.0)
+            cmd = tcp[i] + step * min(1.0, lim / nrm) if nrm > 1e-9 else tgt
             acts[i, :3], acts[i, 3] = cmd, grip
             arrived = np.linalg.norm(tcp[i] - tgt) < self.tol
             if p == 0 and not cube_known[i]:
@@ -60,7 +62,11 @@ class _PickPlaceScript:
                 self._next(i)
             elif p in (0, 1, 3, 4, 5) and arrived:
                 self._next(i)
-        return acts
+
+        yaw = np.zeros(self.n) if yaw is None else yaw
+        out = robot.default_action(acts[:, :3], 0.0, yaw)
+        out[:, -1] = acts[:, 3]
+        return out
 
     def _next(self, i):
         self.phase[i] += 1
@@ -74,9 +80,14 @@ class ScriptedOracle:
         self.script = _PickPlaceScript(n)
 
     def act(self, obs, env):
+        self.script.carry_scale = env.robot.carry_scale
         st = env.privileged()
         tcp = obs["proprio"][:, :3]
-        return self.script.act(tcp, st["cube_pos"], st["goal_pos"], np.ones(len(tcp), bool))
+        # Grasp yaw aligned with the cube (square cube: symmetric under 90 degrees).
+        m = st["cube_mat"]
+        yaw = np.arctan2(m[:, 1, 0], m[:, 0, 0])
+        yaw = (yaw + np.pi / 4) % (np.pi / 2) - np.pi / 4
+        return self.script.act(tcp, st["cube_pos"], st["goal_pos"], np.ones(len(tcp), bool), env.robot, yaw)
 
 
 class ColorCuePolicy:
@@ -117,6 +128,7 @@ class ColorCuePolicy:
         return est
 
     def act(self, obs, env):
+        self.script.carry_scale = env.robot.carry_scale
         tcp = obs["proprio"][:, :3]
         est = self._localise(obs["rgb"][self.camera], env.camera_calibration(self.camera))
         seen = ~np.isnan(est[:, 0])
@@ -127,7 +139,7 @@ class ColorCuePolicy:
         known = ~np.isnan(self.last[:, 0]) & (seen | self.memory | ~pre_grasp)
         cube = np.where(np.isnan(self.last), tcp, self.last)
         goal = np.repeat(self.goal[None], len(tcp), 0)
-        acts = self.script.act(tcp, cube, goal, known)
+        acts = self.script.act(tcp, cube, goal, known, env.robot)
         hold = pre_grasp & ~known
         acts[hold, :3] = tcp[hold]
         return acts

@@ -32,10 +32,12 @@ def main():
     p.add_argument("--horizon", type=int, default=160)
     p.add_argument("--image", type=int, nargs=2, default=[64, 64])
     p.add_argument("--physics", default="cpu")
+    p.add_argument("--robot", choices=["gantry", "panda"], default="gantry")
+    p.add_argument("--anchor", choices=["camera", "world"], default="camera")
     p.add_argument("--render", default="cpu")
     p.add_argument("--out", default=None, help="write raw paired records as JSONL")
     a = p.parse_args()
-    conds = condition_grid(severities=a.severities, onsets=a.onsets, duration=a.duration)
+    conds = condition_grid(severities=a.severities, onsets=a.onsets, duration=a.duration, anchor=a.anchor)
     recs = run_paired(
         POLICIES[a.policy],
         conds,
@@ -45,6 +47,7 @@ def main():
         image_size=tuple(a.image),
         physics=a.physics,
         render=a.render,
+        robot=a.robot,
     )
     if a.out:
         with open(a.out, "w") as f:

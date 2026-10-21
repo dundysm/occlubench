@@ -23,7 +23,7 @@ def _rollout(env: OccluEnv, policy, seeds, conds, frames: list | None = None):
         obs, done, info = env.step(policy.act(obs, env))
         if frames is not None:
             frames.append({k: v.copy() for k, v in obs["rgb"].items()})
-    return env.success_step.copy(), np.stack([env.coverage, env.coverage_other], 1)
+    return env.success_step.copy(), env.coverage_stats()
 
 
 def run_paired(
@@ -46,8 +46,8 @@ def run_paired(
             pad = b + [b[-1]] * (n_envs - len(b))
             s, c = _rollout(env, policy, pad, [cond] * n_envs)
             steps.append(s[: len(b)])
-            covs.append(c[: len(b)])
-        return np.concatenate(steps), np.concatenate(covs)
+            covs.append({k: v[: len(b)] for k, v in c.items()})
+        return np.concatenate(steps), {k: np.concatenate([c[k] for c in covs]) for k in covs[0]}
 
     clean_steps, _ = run_all(CLEAN)
     records = []
@@ -63,8 +63,7 @@ def run_paired(
                     clean_step=int(clean_steps[k]),
                     pert_success=bool(pert_steps[k] >= 0),
                     pert_step=int(pert_steps[k]),
-                    coverage=float(cov[k, 0]),
-                    coverage_other=float(cov[k, 1]),
+                    **{name: float(v[k]) for name, v in cov.items()},
                     horizon=horizon,
                 )
             )

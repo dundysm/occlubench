@@ -1,19 +1,17 @@
-import mujoco
 import numpy as np
 
 from occlubench.env import OccluEnv
-from occlubench.scene import SceneIds, load_model
+from occlubench.robots import make_robot
+from occlubench.scene import SceneIds, build_model
 
 
-def test_scene_loads_with_both_cameras_and_mocap_occluder():
-    m = load_model()
-    ids = SceneIds.from_model(m)
+def test_gantry_scene_has_cameras_and_collision_free_occluder():
+    robot = make_robot("gantry")
+    m = build_model(robot)
+    ids = SceneIds.from_model(m, robot)
     assert set(ids.cams) == {"third_person", "wrist"}
     assert ids.occluder_mocap >= 0
-    # Occluder must not collide with anything.
     assert m.geom_contype[ids.occluder_geom] == 0 and m.geom_conaffinity[ids.occluder_geom] == 0
-    d = mujoco.MjData(m)
-    mujoco.mj_step(m, d)
 
 
 def test_reset_is_seeded_and_deterministic():
@@ -30,6 +28,6 @@ def test_render_shapes():
     for cam in ("third_person", "wrist"):
         assert obs["rgb"][cam].shape == (2, 32, 40, 3)
         assert obs["rgb"][cam].dtype == np.uint8
-        assert obs["rgb"][cam].std() > 1.0  # not a blank frame
+        assert obs["rgb"][cam].std() > 1.0
     assert obs["proprio"].shape == (2, 5)
     env.close()

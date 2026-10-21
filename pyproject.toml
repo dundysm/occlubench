@@ -35,3 +35,5 @@ ignore = ["B905", "E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["panda: Franka Panda tests (fetch MuJoCo Menagerie; run in a separate process)"]
+addopts = "-m 'not panda'"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import asdict, dataclass
 
-CAMERAS = ("third_person", "wrist")
+from occlubench.scene import CAMERAS
 
 
 @dataclass(frozen=True)
@@ -18,12 +18,16 @@ class Condition:
               in (0, 1]. Calibrated per episode from segmentation renders.
     onset:    fraction of the episode horizon at which the occluder starts moving in.
     duration: fraction of the horizon the occluder stays in place before leaving.
+    anchor:   "camera" (default): the occluder keeps re-aligning to the camera->object ray every
+              step, so target-camera severity stays roughly constant even as the wrist camera moves.
+              "world": the pose is frozen in the world at onset, like an object that stops in place.
     """
 
     camera: str = "none"
     severity: float = 0.0
     onset: float = 0.0
     duration: float = 0.25
+    anchor: str = "camera"
 
     def __post_init__(self):
         if self.camera not in ("none", *CAMERAS):
@@ -34,6 +38,8 @@ class Condition:
             raise ValueError("onset must be in [0, 1)")
         if not 0.0 < self.duration <= 1.0:
             raise ValueError("duration must be in (0, 1]")
+        if self.anchor not in ("camera", "world"):
+            raise ValueError("anchor must be 'camera' or 'world'")
 
     @property
     def is_clean(self) -> bool:
@@ -43,7 +49,8 @@ class Condition:
     def name(self) -> str:
         if self.is_clean:
             return "clean"
-        return f"{self.camera}_sev{self.severity:.2f}_on{self.onset:.2f}_dur{self.duration:.2f}"
+        tag = "" if self.anchor == "camera" else "_world"
+        return f"{self.camera}_sev{self.severity:.2f}_on{self.onset:.2f}_dur{self.duration:.2f}{tag}"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -57,9 +64,10 @@ def condition_grid(
     severities=(0.5, 1.0),
     onsets=(0.15, 0.45),
     duration: float = 0.25,
+    anchor: str = "camera",
 ) -> list[Condition]:
     """Full factorial grid. Defaults give a 2 x 2 x 2 grid (8 conditions)."""
     return [
-        Condition(camera=c, severity=s, onset=o, duration=duration)
+        Condition(camera=c, severity=s, onset=o, duration=duration, anchor=anchor)
         for c, s, o in itertools.product(cameras, severities, onsets)
     ]

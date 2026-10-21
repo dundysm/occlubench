@@ -31,8 +31,10 @@ def summarize(records: list[dict], n_boot: int = 10_000) -> list[dict]:
     * paired_drop              mean(clean - perturbed) over paired seeds, with CI
     * conditional_success      P(perturbed success | clean success), with CI
     * recovery_steps           mean extra steps to success (perturbed - clean) when both succeed
-    * coverage                 mean achieved occlusion fraction (target pixels hidden) in the targeted camera
-    * coverage_other           leakage: fraction hidden in the *other* camera by the same physical occluder
+    * coverage                 mean hidden fraction in the targeted camera over the steps the occluder is in the scene
+    * coverage_other           leakage: mean hidden fraction in the *other* camera over the same steps
+    * coverage_other_max       worst-step leakage (v0 only measured leakage once, at onset)
+    * coverage_onset           hidden fraction in the targeted camera at onset (the calibrated value)
     """
     by = defaultdict(list)
     for r in records:
@@ -57,6 +59,9 @@ def summarize(records: list[dict], n_boot: int = 10_000) -> list[dict]:
                 recovery_steps=bootstrap_ci(both, n_boot=n_boot),
                 coverage=_nanmean([r["coverage"] for r in rs]),
                 coverage_other=_nanmean([r.get("coverage_other", np.nan) for r in rs]),
+                coverage_onset=_nanmean([r.get("coverage_onset", np.nan) for r in rs]),
+                coverage_max=_nanmean([r.get("coverage_max", np.nan) for r in rs]),
+                coverage_other_max=_nanmean([r.get("coverage_other_max", np.nan) for r in rs]),
             )
         )
     return rows
@@ -66,11 +71,11 @@ def format_table(rows: list[dict]) -> str:
     def ci(t):
         return f"{t[0]:+.3f} [{t[1]:+.3f}, {t[2]:+.3f}]"
 
-    head = "| condition | n | coverage (other cam) | clean SR | pert SR | paired drop [95% CI] | P(pert ok given clean ok) [95% CI] | recovery steps [95% CI] |"
+    head = "| condition | n | coverage (leak mean / max) | clean SR | pert SR | paired drop [95% CI] | P(pert ok given clean ok) [95% CI] | recovery steps [95% CI] |"
     lines = [head, "|" + "---|" * 8]
     for r in rows:
         lines.append(
-            f"| {r['condition']} | {r['n']} | {r['coverage']:.2f} ({r['coverage_other']:.2f}) | {r['clean_sr']:.2f} | {r['pert_sr']:.2f} | "
+            f"| {r['condition']} | {r['n']} | {r['coverage']:.2f} ({r['coverage_other']:.2f} / {r['coverage_other_max']:.2f}) | {r['clean_sr']:.2f} | {r['pert_sr']:.2f} | "
             f"{ci(r['paired_drop'])} | {ci(r['conditional_success'])} | {ci(r['recovery_steps'])} |"
         )
     return "\n".join(lines)
