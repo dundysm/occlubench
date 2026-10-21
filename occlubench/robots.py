@@ -45,7 +45,7 @@ class GantryRobot:
     TCP_Z0 = 0.68
     GRIP_OPEN, GRIP_CLOSED = 0.012, -0.028
     needs_jacobian = False
-    grasp_dz = 0.004  # tcp height above the cube centre when grasping
+    grasp_dz = -0.008
     carry_scale = 1.0  # speed multiplier while carrying the cube
 
     def attach(self, spec: mujoco.MjSpec):

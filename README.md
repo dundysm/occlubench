@@ -7,10 +7,11 @@ simulated object (a mocap plate, rendered by every camera) slides into the line 
 fraction of the task object, holds, and slides out. Every perturbed rollout is paired with a clean rollout from the
 identical initial state, and results are reported with bootstrap 95% confidence intervals.
 
-> **Status: v0.2.** Two robots: the Franka Panda from MuJoCo Menagerie (fetched at runtime) and a simple gantry. Occluder
-> placement, coverage, success and IK are batched across envs. The Warp backend is tested against CPU MuJoCo on Warp's CPU
-> device. **No NVIDIA GPU numbers yet**: run [`scripts/brev_run.sh`](#gpu-runs-nvidia-brev-h100--a100) to produce
-> them. No VLA has been evaluated yet. See [Roadmap](#roadmap).
+> **Status: v0.3.** Two robots: the Franka Panda from MuJoCo Menagerie (fetched at runtime) and a simple gantry. On the
+> Warp path, occluder placement, calibration, coverage and success run as Warp kernels; IK is still batched NumPy on the
+> host. An OpenVLA-OFT adapter is included (tested in CI in mock mode only). Everything is tested on CPU and on Warp's CPU
+> device. **No NVIDIA GPU numbers yet** and **no VLA has been evaluated yet**: run
+> [`scripts/brev_run.sh`](#gpu-runs-nvidia-brev-h100--a100) to produce GPU numbers. See [Roadmap](#roadmap).
 
 ![clean vs occluded](docs/images/grid.png)
 
@@ -60,7 +61,8 @@ The Panda is fetched on first use: a sparse git checkout of Menagerie at a pinne
 
 Proprioception: gantry `(N, 5)` = tcp xyz, finger opening, grip command. Panda `(N, 12)` = the same plus 7 joint angles.
 
-Scripted oracle success rates: gantry 64/64; Panda 62/64 (`tests/test_panda.py` asserts ≥ 90%).
+Scripted oracle success rates (CPU, horizon 200, seeds 0–255): gantry 256/256; Panda 256/256. v0.2's two Panda failures
+were a yaw-wrap bug in the oracle (fixed in v0.3). `tests/test_panda.py` requires all of seeds 30–53 to succeed.
 
 ## Install
 
@@ -88,7 +90,8 @@ Or from the command line: `python scripts/run_grid.py --policy colorcue --seeds 
 
 ### Environment API
 
-* `OccluEnv(n_envs, horizon=200, image_size=(96, 96), physics="cpu"|"warp", render="cpu"|"warp"|"none", robot="gantry"|"panda")`
+* `OccluEnv(n_envs, horizon=200, image_size=(96, 96), physics="cpu"|"warp", render="cpu"|"warp"|"none", robot="gantry"|"panda", device_ops=None)`
+  (`device_ops` defaults to on with `physics="warp"`; `False` forces the NumPy reference for the occluder/scoring step)
 * `reset(seeds, conditions)` → `obs`; `step(actions)` → `obs, done, info`
 * `obs["rgb"]["third_person"]`, `obs["rgb"]["wrist"]`: `(N, H, W, 3)` uint8. `obs["proprio"]`: `(N, 5)` tcp xyz, finger
   opening, grip command.
@@ -132,8 +135,10 @@ step the occluder is in the scene. See [docs/leakage_analysis.md](docs/leakage_a
 * `ColorCuePolicy` uses pixels and proprioception only, and is not learned. It finds the red cube in one camera by colour
   thresholding and back-projection, then runs a pick-and-place script. With `memory=False` it waits while the cube is
   hidden. It gives the grid a non-trivial signal on CPU.
-* `OpenVLAOFTPolicy` is an interface stub (no weights, not functional in v0). The docstring gives the planned
-  observation and action mapping.
+* `OpenVLAOFTPolicy` adapts OpenVLA-OFT: `backend="hf"` (transformers, lazy import), `backend="oft"` (the openvla-oft
+  loaders with the L1 action head and proprio projector), or `backend="mock"` (CI). Configurable model id, action
+  chunking, bounds unnormalisation, gripper convention. Not yet run end to end on a GPU; released checkpoints target
+  LIBERO, so fine-tune first. See [docs/openvla_oft.md](docs/openvla_oft.md).
 
 ## GPU runs (NVIDIA Brev, H100 / A100)
 
@@ -160,12 +165,14 @@ What runs where on the Warp path, per control step:
 
 * **Physics and rendering stay on the device.** The env runs `mjw.step` × substeps, then `mjw.kinematics`, `camlight`,
   `com_pos`, and `jac` at the tcp.
-* **Small state arrays come back to the host:** qpos, the cube, tcp and camera poses, and the tcp Jacobian (Panda only).
-  There are no per-env host kinematics calls. Occluder placement, coverage, success and IK are batched numpy on those
-  arrays.
-* **ctrl and mocap go back to the device.**
+* **Occluder and scoring stay on the device** (`occlubench/warp_ops.py`): one kernel places the occluder (including
+  onset calibration by bisection), writes its mocap pose into Warp Data and accumulates two-camera coverage; another
+  tracks success. These reach the host only when `env.success_step`, `env.coverage_stats()` or an `info` value is read.
+  Parity with the NumPy reference is tested (`tests/test_warp_ops.py`).
+* **Still copied each step, for IK on the host:** qpos, tcp pose, and the tcp Jacobian (Panda), plus cube/camera poses
+  for `privileged()`/`camera_calibration()`. **ctrl goes back to the device.**
 * **Images are copied to the host only when observations are built**, because policies currently run on the host.
-  On-device policies (for example torch over DLPack) and Warp kernels for the occluder/IK step are next.
+  A Warp IK kernel and on-device policies (for example torch over DLPack) are next.
 
 Measured on a CPU-only box (no GPU), CPU backend: gantry ~23 env-steps/s with two 96×96 CPU-rendered cameras. Physics
 only: gantry ~1,000 env-steps/s and Panda ~3,400 env-steps/s at 64 envs. CPU OSMesa rendering of the Panda meshes is
@@ -194,15 +201,17 @@ ruff check . && ruff format --check .
 python scripts/render_docs.py   # regenerates docs/images
 ```
 
-CI (GitHub Actions) runs ruff, the CPU tests, the Panda tests and the Warp-backend tests (on Warp's CPU device) on every PR. Example CPU grid output: [docs/results_v0_cpu.md](docs/results_v0_cpu.md).
+CI (GitHub Actions) runs ruff, the CPU tests, the Panda tests and the Warp-backend tests (on Warp's CPU device) on every push to main and every PR. Example CPU grid output: [docs/results_v0_cpu.md](docs/results_v0_cpu.md).
 
 ## Roadmap
 
 - [x] v0.2: batched occluder, coverage, success and IK; no per-env host kinematics on the Warp path; Menagerie Panda with
       IK; per-step leakage tracking; `brev_run.sh`.
+- [x] v0.3: Warp kernels for occluder placement, calibration, coverage and success (NumPy fallback, parity tests);
+      OpenVLA-OFT adapter (hf / oft / mock backends); Panda oracle fixed (256/256 on CPU).
 - [ ] **GPU numbers:** run `brev_run.sh` on an H100/A100 and publish throughput and memory against `n_envs` and resolution.
-- [ ] **Fully on-device step:** Warp kernels for the occluder, coverage and IK; on-device policies via DLPack; optional
-      Warp-segmentation coverage.
+- [ ] **Fully on-device step:** a Warp IK kernel; on-device policies via DLPack; optional Warp-segmentation coverage.
+- [ ] **First VLA numbers:** run the OpenVLA-OFT adapter end to end on a GPU, zero-shot and after fine-tuning.
 - [ ] **More tasks:** LIBERO-style tasks for the Panda (drawer, stacking); joint torque or OSC control modes.
 - [ ] **Occluder families:** world-fixed occluders (for example a person or arm passing by), moving clutter, and partial
       transparency. Static (LIBERO-Occ-style) and dropout (MAIL-Bench-style) controls are included for comparison.
