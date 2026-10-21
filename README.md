@@ -152,7 +152,7 @@ ruff check . && ruff format --check .
 python scripts/render_docs.py   # regenerates docs/images
 ```
 
-CI (GitHub Actions) runs ruff and the CPU tests on every PR.
+CI (GitHub Actions) runs ruff and the CPU tests on every PR. Example CPU grid output: [docs/results_v0_cpu.md](docs/results_v0_cpu.md).
 
 ## Roadmap
 
