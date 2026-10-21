@@ -6,7 +6,7 @@
   one camera by colour thresholding and back-projection, then runs the same pick-and-place
   script. It is affected by occlusion of the camera it relies on, which makes it a
   meaningful smoke test for the camera axis of the grid.
-* ``OpenVLAOFTPolicy`` is an interface stub for OpenVLA-OFT (no weights bundled).
+* ``OpenVLAOFTPolicy`` adapts OpenVLA-OFT (lazy HF / openvla-oft import, mock mode for CI).
 """
 
 from __future__ import annotations
@@ -145,23 +145,181 @@ class ColorCuePolicy:
         return acts
 
 
-class OpenVLAOFTPolicy:
-    """Interface stub for OpenVLA-OFT (https://github.com/moojink/openvla-oft).
+def unnormalize_actions(a, q01, q99, mask=None):
+    """OpenVLA / OpenVLA-OFT bounds unnormalisation: [-1, 1] -> [q01, q99] on masked dims."""
+    a = np.asarray(a, float)
+    q01, q99 = np.asarray(q01, float), np.asarray(q99, float)
+    mask = np.ones_like(q01, bool) if mask is None else np.asarray(mask, bool)
+    return np.where(mask, 0.5 * (a + 1.0) * (q99 - q01) + q01, a)
 
-    Not functional in v0: no weights are bundled and the model is not a dependency.
-    Intended mapping: third_person -> "full_image", wrist -> "wrist_image" (both resized
-    to 224x224), proprio -> "state"; the predicted end-effector delta chunk is integrated
-    into OccluBench's absolute tcp target + gripper action. Fine-tune on OccluBench demos
-    first (the released LIBERO checkpoints target a different robot and action space).
+
+class OpenVLAOFTPolicy:
+    """OpenVLA-OFT adapter (https://github.com/moojink/openvla-oft).
+
+    Observation mapping: ``third_person`` -> ``full_image`` and ``wrist`` -> ``wrist_image``
+    (resized to ``image_size``), proprio -> 8-D ``state`` laid out like LIBERO (tcp xyz, 3 zeros
+    for orientation, finger width twice). The model predicts a chunk of ``chunk`` end-effector
+    deltas ``(dx, dy, dz, droll, dpitch, dyaw, gripper)``. The adapter executes the first
+    ``open_loop_steps`` of each chunk, integrating the position delta (times ``delta_scale``)
+    into OccluBench's absolute tcp target and the yaw delta into the Panda's yaw target.
+    The gripper goes from the model's [0, 1] (1 = open) to OccluBench's [-1, 1] (+1 = close).
+
+    backend:
+      * ``"mock"``: no model. Deterministic normalised chunks, unnormalised with ``norm_stats``.
+        Used by CI to exercise chunking, unnormalisation and action conversion.
+      * ``"hf"``: Hugging Face ``transformers`` (lazy import) ``AutoModelForVision2Seq`` with
+        ``trust_remote_code=True``; calls ``model.predict_action``. If ``outputs_normalized``
+        the adapter unnormalises with ``norm_stats`` (or ``model.norm_stats[unnorm_key]``).
+      * ``"oft"``: the openvla-oft repo's own loaders (``experiments.robot.openvla_utils``:
+        ``get_vla``, ``get_processor``, ``get_action_head``, ``get_proprio_projector``,
+        ``get_vla_action``), which add the L1 action head and proprio projector the OFT
+        checkpoints need. The repo must be installed (``pip install -e openvla-oft``).
+
+    Released checkpoints target LIBERO's Franka, cameras and action space, so expect near-zero
+    success zero-shot; fine-tune on OccluBench demos first. See docs/openvla_oft.md.
+    The ``hf`` and ``oft`` backends have not yet been run end to end on a GPU by this project.
     """
 
     uses_privileged_state = False
 
-    def __init__(self, checkpoint: str | None = None, device: str = "cuda"):
-        self.checkpoint, self.device = checkpoint, device
+    def __init__(
+        self,
+        model_id: str = "moojink/openvla-7b-oft-finetuned-libero-spatial",
+        backend: str = "hf",
+        device: str = "cuda",
+        instruction: str = "pick up the red cube and place it on the green target",
+        unnorm_key: str | None = "libero_spatial_no_noops",
+        norm_stats: dict | None = None,
+        chunk: int = 8,
+        open_loop_steps: int | None = None,
+        action_dim: int = 7,
+        image_size: int = 224,
+        delta_scale: float = 1.0,
+        outputs_normalized: bool = False,
+        invert_gripper: bool = True,
+        seed: int = 0,
+    ):
+        if backend not in ("mock", "hf", "oft"):
+            raise ValueError(f"unknown backend {backend!r}")
+        self.model_id, self.backend, self.device = model_id, backend, device
+        self.instruction, self.unnorm_key = instruction, unnorm_key
+        self.norm_stats = norm_stats
+        self.chunk, self.action_dim, self.image_size = chunk, action_dim, image_size
+        self.open_loop_steps = open_loop_steps or chunk
+        self.delta_scale, self.outputs_normalized, self.invert_gripper = delta_scale, outputs_normalized, invert_gripper
+        self.seed = seed
+        self._model = None
+        if backend == "mock" and norm_stats is None:
+            self.norm_stats = dict(q01=[-0.01] * 6 + [0.0], q99=[0.01] * 6 + [1.0], mask=[True] * 6 + [False])
 
+    # ---------------------------------------------------------------- model loading (lazy)
+    def _load(self):
+        if self._model is not None or self.backend == "mock":
+            return
+        if self.backend == "hf":
+            import torch
+            from transformers import AutoModelForVision2Seq, AutoProcessor
+
+            self._processor = AutoProcessor.from_pretrained(self.model_id, trust_remote_code=True)
+            self._model = AutoModelForVision2Seq.from_pretrained(
+                self.model_id, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
+            ).to(self.device)
+            if self.norm_stats is None and self.outputs_normalized:
+                self.norm_stats = self._model.norm_stats[self.unnorm_key]["action"]
+        else:  # oft
+            from types import SimpleNamespace
+
+            from experiments.robot import openvla_utils as ou
+
+            self._cfg = SimpleNamespace(
+                pretrained_checkpoint=self.model_id,
+                use_l1_regression=True,
+                use_diffusion=False,
+                use_film=False,
+                num_images_in_input=2,
+                use_proprio=True,
+                center_crop=True,
+                num_open_loop_steps=self.open_loop_steps,
+                unnorm_key=self.unnorm_key,
+                load_in_8bit=False,
+                load_in_4bit=False,
+            )
+            self._model = ou.get_vla(self._cfg)
+            self._processor = ou.get_processor(self._cfg)
+            self._action_head = ou.get_action_head(self._cfg, self._model.llm_dim)
+            self._proprio = ou.get_proprio_projector(self._cfg, self._model.llm_dim, proprio_dim=8)
+            self._ou = ou
+
+    # ---------------------------------------------------------------- inference
+    def _state(self, proprio):
+        p = np.asarray(proprio, float)
+        return np.concatenate([p[:3], np.zeros(3), [p[3], p[3]]])
+
+    def _resize(self, img):
+        from PIL import Image
+
+        return np.asarray(Image.fromarray(img).resize((self.image_size, self.image_size), Image.BILINEAR))
+
+    def predict_chunk(self, full_image, wrist_image, proprio) -> np.ndarray:
+        """One env. Returns (chunk, action_dim) unnormalised end-effector deltas + gripper in [0, 1]."""
+        if self.backend == "mock":
+            k = np.arange(self.chunk)[:, None]
+            j = np.arange(self.action_dim)[None]
+            raw = np.sin(0.7 * k + 1.3 * j + self.seed + self._calls)
+            self._calls += 1
+            return unnormalize_actions(raw, **self.norm_stats)
+        self._load()
+        full, wrist = self._resize(full_image), self._resize(wrist_image)
+        if self.backend == "oft":
+            obs = dict(full_image=full, wrist_image=wrist, state=self._state(proprio))
+            acts = self._ou.get_vla_action(
+                self._cfg,
+                self._model,
+                self._processor,
+                obs,
+                self.instruction,
+                action_head=self._action_head,
+                proprio_projector=self._proprio,
+                use_film=False,
+            )
+            return np.asarray(acts, float).reshape(-1, self.action_dim)
+        import torch
+        from PIL import Image
+
+        prompt = f"In: What action should the robot take to {self.instruction.lower()}?\nOut:"
+        inputs = self._processor(prompt, Image.fromarray(full).convert("RGB")).to(self.device, dtype=torch.bfloat16)
+        out = self._model.predict_action(**inputs, unnorm_key=self.unnorm_key, do_sample=False)
+        out = out[0] if isinstance(out, tuple) else out
+        a = np.asarray(out, float).reshape(-1, self.action_dim)
+        if self.outputs_normalized:
+            a = unnormalize_actions(
+                a, **{k: self.norm_stats[k] for k in ("q01", "q99")}, mask=self.norm_stats.get("mask")
+            )
+        return a
+
+    def to_env_action(self, delta, tcp, yaw, robot):
+        """(N, 7) model deltas -> (N, robot.action_dim) absolute OccluBench actions."""
+        target = tcp + self.delta_scale * delta[:, :3]
+        g = np.clip(delta[:, 6], 0.0, 1.0) * 2.0 - 1.0  # 1 = open in the model convention
+        grip = -g if self.invert_gripper else g
+        out = robot.default_action(target, 0.0, yaw)
+        out[:, -1] = grip
+        return out
+
+    # ---------------------------------------------------------------- policy API
     def reset(self, n: int):
         self.n = n
+        self._calls = 0
+        self._queue = [[] for _ in range(n)]
+        self._yaw = np.zeros(n)
 
     def act(self, obs, env):
-        raise NotImplementedError("OpenVLA-OFT adapter is a stub in v0; see the docstring for the planned mapping.")
+        rgb, prop = obs["rgb"], obs["proprio"]
+        deltas = np.empty((self.n, self.action_dim))
+        for i in range(self.n):
+            if not self._queue[i]:
+                ch = self.predict_chunk(rgb["third_person"][i], rgb["wrist"][i], prop[i])
+                self._queue[i] = list(ch[: self.open_loop_steps])
+            deltas[i] = self._queue[i].pop(0)
+        self._yaw = self._yaw + deltas[:, 5]
+        return self.to_env_action(deltas, prop[:, :3], self._yaw, env.robot)

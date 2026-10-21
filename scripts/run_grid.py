@@ -2,6 +2,7 @@
 
 MUJOCO_GL=osmesa python scripts/run_grid.py --policy colorcue --seeds 32 --n-envs 16
 python scripts/run_grid.py --policy colorcue --seeds 1024 --n-envs 256 --physics warp --render warp
+python scripts/run_grid.py --policy openvla_oft --robot panda --seeds 64 --n-envs 8 --image 224 224  # see docs/openvla_oft.md
 """
 
 import argparse
@@ -12,12 +13,18 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 
 from occlubench import condition_grid, run_paired, summarize  # noqa: E402
 from occlubench.metrics import format_table  # noqa: E402
-from occlubench.policies import ColorCuePolicy, ScriptedOracle  # noqa: E402
+from occlubench.policies import ColorCuePolicy, OpenVLAOFTPolicy, ScriptedOracle  # noqa: E402
 
 POLICIES = {
     "oracle": ScriptedOracle,
     "colorcue": ColorCuePolicy,
     "colorcue_memory": lambda: ColorCuePolicy(memory=True),
+    # OpenVLA-OFT: OCCLUBENCH_VLA_BACKEND=hf|oft, OCCLUBENCH_VLA_MODEL=<hf id or local path>
+    "openvla_oft": lambda: OpenVLAOFTPolicy(
+        backend=os.environ.get("OCCLUBENCH_VLA_BACKEND", "oft"),
+        model_id=os.environ.get("OCCLUBENCH_VLA_MODEL", "moojink/openvla-7b-oft-finetuned-libero-spatial"),
+    ),
+    "openvla_oft_mock": lambda: OpenVLAOFTPolicy(backend="mock"),
 }
 
 

@@ -14,6 +14,7 @@ dependencies = ["mujoco>=3.3", "numpy>=1.24"]
 
 [project.optional-dependencies]
 warp = ["mujoco-warp", "warp-lang"]
+vla = ["torch>=2.2", "transformers>=4.40,<4.48", "timm>=0.9.10", "tokenizers", "pillow", "accelerate"]
 dev = ["pytest>=8", "ruff>=0.6", "pillow"]
 
 [project.urls]
