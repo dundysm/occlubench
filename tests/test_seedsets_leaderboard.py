@@ -37,11 +37,14 @@ def test_benchmark_smoke_and_leaderboard(tmp_path):
     fake["rows"] = [dict(r, paired_drop=[0.5, 0.4, 0.6]) for r in res["rows"]]
     (tmp_path / "fake.json").write_text(json.dumps(fake))
     (tmp_path / "junk.json").write_text("[1, 2]")
+    import gzip
+
+    (tmp_path / "gz.json.gz").write_bytes(gzip.compress(json.dumps(dict(res, policy="gz")).encode()))
     entries = collect(tmp_path)
-    assert [e["policy"] for e in entries] == ["fake", "oracle"]
+    assert [e["policy"] for e in entries][0] == "fake" and {e["policy"] for e in entries} == {"fake", "oracle", "gz"}
     md = build(tmp_path, tmp_path / "leaderboard.md")
     assert "| 1 | fake |" in md and "partial" in md
-    assert np.isclose(entries[1]["clean_sr"], 1.0)
+    assert np.isclose(entries[-1]["clean_sr"], 1.0)
 
 
 def test_empty_leaderboard(tmp_path):

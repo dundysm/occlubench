@@ -17,6 +17,16 @@ from run_grid import POLICIES  # noqa: E402
 from occlubench.leaderboard import run_benchmark  # noqa: E402
 
 
+def _write(res, path):
+    """``.json.gz`` paths are gzip-compressed."""
+    import gzip
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    data = json.dumps(res, separators=(",", ":")).encode()
+    with open(path, "wb") as f:
+        f.write(gzip.compress(data) if path.endswith(".gz") else data)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--policy", choices=list(POLICIES), default="colorcue")
@@ -33,11 +43,10 @@ def main():
     p.add_argument("--out", required=True)
     a = p.parse_args()
     if a.merge:
-        from occlubench.leaderboard import merge_results
+        from occlubench.leaderboard import load_results, merge_results
 
-        res = merge_results([json.load(open(f)) for f in a.merge])
-        with open(a.out, "w") as f:
-            json.dump(res, f)
+        res = merge_results([load_results(f) for f in a.merge])
+        _write(res, a.out)
         print(f"merged {len(a.merge)} files into {a.out} (complete={res['complete']}, cells={len(res['rows'])})")
         return
     res = run_benchmark(
@@ -53,9 +62,7 @@ def main():
         physics=a.physics,
         render=a.render,
     )
-    os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-    with open(a.out, "w") as f:
-        json.dump(res, f)
+    _write(res, a.out)
     print(f"wrote {a.out} (complete={res['complete']}, cells={len(res['rows'])})")
 
 

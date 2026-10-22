@@ -145,12 +145,22 @@ def _entry(res: dict, path: Path) -> dict:
     )
 
 
+def load_results(path: str | Path) -> dict:
+    """Read a results file; ``.json.gz`` is accepted (full runs with per-pair records are large)."""
+    import gzip
+
+    p = Path(path)
+    raw = gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_bytes()
+    return json.loads(raw)
+
+
 def collect(results_dir: str | Path) -> list[dict]:
     out = []
-    for p in sorted(Path(results_dir).rglob("*.json")):
+    paths = sorted([*Path(results_dir).rglob("*.json"), *Path(results_dir).rglob("*.json.gz")])
+    for p in paths:
         try:
-            res = json.loads(p.read_text())
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            res = load_results(p)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             continue
         if isinstance(res, dict) and res.get("schema") == SCHEMA and res.get("rows"):
             out.append(_entry(res, p))
