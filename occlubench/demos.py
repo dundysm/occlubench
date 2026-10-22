@@ -20,6 +20,13 @@ Each episode file holds per-step arrays (T = episode length):
 Demo seeds come from a range disjoint from the frozen evaluation seed sets (``DEMO_SEED_BASE``),
 so fine-tuning never sees an evaluation initial state. By default only successful clean episodes
 are kept and each is truncated a few steps after success.
+
+Occluded demos: with ``occluded_frac > 0`` each episode is, with that probability, run under a
+condition drawn uniformly from ``occluded_conditions`` (default: the training grid
+``TRAIN_OCCLUSIONS``, whose severities/onsets differ from the v1 evaluation cells). The oracle
+uses privileged state, so it keeps acting correctly while a camera is blocked; the demos therefore
+show the behaviour a robust policy should have. The condition of each episode is stored in
+``meta/episodes.jsonl``.
 """
 
 from __future__ import annotations
@@ -29,12 +36,17 @@ from pathlib import Path
 
 import numpy as np
 
-from occlubench.conditions import CLEAN, Condition
+from occlubench.conditions import CLEAN, Condition, condition_grid
 from occlubench.env import OccluEnv
 from occlubench.policies import ScriptedOracle
 
 DEMO_SEED_BASE = 1_000_000  # frozen evaluation seed sets live below this
 FORMAT = "occlubench-demos-v1"
+# Training occlusions: severities and onsets chosen to differ from the v1 evaluation cells
+# (severity 0.5/1.0, onset 0.15/0.45), so no evaluation cell is seen verbatim in training.
+TRAIN_OCCLUSIONS = condition_grid(
+    severities=(0.35, 0.7, 0.9), onsets=(0.05, 0.25, 0.35), duration=0.25
+) + condition_grid(severities=(0.35, 0.7, 0.9), onsets=(0.05, 0.25, 0.35), duration=0.25, anchor="world")
 TASK = "pick up the red cube and place it on the green target"
 
 
@@ -64,6 +76,8 @@ def generate(
     seed_base: int = DEMO_SEED_BASE,
     keep_failures: bool = False,
     tail_steps: int = 10,
+    occluded_frac: float = 0.0,
+    occluded_conditions: list[Condition] | None = None,
 ) -> dict:
     """Roll out the scripted oracle in batches of ``n_envs`` and write episodes. Returns a summary."""
     out = Path(out_dir)
@@ -72,11 +86,17 @@ def generate(
     env = OccluEnv(n_envs=n_envs, horizon=horizon, image_size=image_size, physics=physics, render=render, robot=robot)
     pol = ScriptedOracle()
     written, tried, seed = 0, 0, seed_base
+    occ = list(occluded_conditions or TRAIN_OCCLUSIONS)
+    rng = np.random.default_rng(seed_base)
     episodes = []
     while written < n_episodes:
         seeds = list(range(seed, seed + n_envs))
         seed += n_envs
-        obs = env.reset(seeds, [condition] * n_envs)
+        conds = [
+            occ[rng.integers(len(occ))] if occluded_frac > 0 and rng.random() < occluded_frac else condition
+            for _ in range(n_envs)
+        ]
+        obs = env.reset(seeds, conds)
         pol.reset(n_envs)
         buf = {k: [] for k in ("tp", "wr", "state", "proprio", "act", "tcp")}
         done = False
@@ -115,7 +135,7 @@ def generate(
                     length=t_end,
                     success=ok,
                     success_step=int(succ[i]),
-                    condition=condition.to_dict(),
+                    condition=conds[i].to_dict(),
                     task=TASK,
                 )
             )
@@ -134,6 +154,8 @@ def generate(
         control_dt=float(env.m.opt.timestep * env.substeps),
         n_episodes=written,
         n_tried=tried,
+        n_occluded=int(sum(e["condition"]["camera"] != "none" for e in episodes)),
+        occluded_frac=occluded_frac,
         n_frames=int(sum(e["length"] for e in episodes)),
         seed_base=seed_base,
         task=TASK,
