@@ -1,17 +1,26 @@
-"""OccluBench: GPU-native VLA robustness benchmark for moving physical occluders."""
+"""OccluBench: GPU-native VLA robustness benchmark for moving physical occluders.
 
-from occlubench.conditions import CAMERAS, Condition, condition_grid
-from occlubench.env import OccluEnv
-from occlubench.metrics import bootstrap_ci, summarize
-from occlubench.runner import run_paired
+Exports are imported lazily so that light submodules (for example ``occlubench.rlds``, which
+loads TensorFlow) can be used without importing MuJoCo: TensorFlow and MuJoCo crash when both
+are loaded into one process on some builds.
+"""
 
-__all__ = [
-    "CAMERAS",
-    "Condition",
-    "condition_grid",
-    "OccluEnv",
-    "bootstrap_ci",
-    "summarize",
-    "run_paired",
-]
+import importlib
+
+_EXPORTS = {
+    "CAMERAS": "occlubench.conditions",
+    "Condition": "occlubench.conditions",
+    "condition_grid": "occlubench.conditions",
+    "OccluEnv": "occlubench.env",
+    "bootstrap_ci": "occlubench.metrics",
+    "summarize": "occlubench.metrics",
+    "run_paired": "occlubench.runner",
+}
+__all__ = list(_EXPORTS)
 __version__ = "0.0.1"
+
+
+def __getattr__(name):
+    if name in _EXPORTS:
+        return getattr(importlib.import_module(_EXPORTS[name]), name)
+    raise AttributeError(f"module 'occlubench' has no attribute {name!r}")

@@ -56,3 +56,14 @@ jobs:
       - run: pytest -q tests/test_warp_backend.py tests/test_warp_ops.py tests/test_warp_ik.py
       - run: python -m occlubench.menagerie
       - run: pytest -q -m panda -o addopts= -k device_ik tests/test_panda.py
+  test-rlds:
+    runs-on: ubuntu-latest
+    env:
+      MUJOCO_GL: osmesa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get update && sudo apt-get install -y libosmesa6
+      - run: pip install -e ".[dev,rlds]"
+      - run: pytest -q tests/test_rlds.py tests/test_patch_oft.py
