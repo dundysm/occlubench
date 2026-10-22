@@ -11,9 +11,10 @@ identical initial state, and results are reported with bootstrap 95% confidence 
 > Warp path, occluder placement, calibration, coverage, success **and the robots' IK** run as Warp kernels. An
 > OpenVLA-OFT adapter is included (its `oft` backend checked against the openvla-oft source, but tested in CI only with
 > mocks), plus a scripted-demo generator for fine-tuning, frozen v1 seed sets (16 cells × 1,024 pairs) and a leaderboard
-> builder. Everything is tested on CPU and on Warp's CPU device. **No NVIDIA GPU numbers yet**, **no VLA has been
-> evaluated yet** and the [leaderboard](results/leaderboard.md) is empty: run
-> [`scripts/brev_run.sh`](#gpu-runs-nvidia-brev-h100--a100) to produce GPU numbers. See [Roadmap](#roadmap).
+> builder. Tested on CPU and Warp's CPU device in CI, and **measured on one NVIDIA L40S** ([GPU results](#gpu-results-nvidia-l40s)):
+> up to ~3,700 env-steps/s (gantry) and ~3,200 (Panda) at 512 envs with two 128×128 cameras rendered on the GPU. **No
+> VLA has been evaluated yet** and the [leaderboard](results/leaderboard.md) is empty. No H100/A100 numbers yet. See
+> [Roadmap](#roadmap).
 
 ![clean vs occluded](docs/images/grid.png)
 
@@ -142,9 +143,9 @@ step the occluder is in the scene. See [docs/leakage_analysis.md](docs/leakage_a
   chunking, bounds unnormalisation, gripper convention. Not yet run end to end on a GPU; released checkpoints target
   LIBERO, so fine-tune first. See [docs/openvla_oft.md](docs/openvla_oft.md).
 
-## GPU runs (NVIDIA Brev, H100 / A100)
+## GPU runs (NVIDIA Brev)
 
-On a fresh NVIDIA Brev H100 80GB or A100 80GB instance (Ubuntu + NVIDIA driver):
+On a fresh NVIDIA Brev GPU instance (tested on L40S; H100/A100 should work) (Ubuntu + NVIDIA driver):
 
 ```bash
 git clone https://github.com/dundysm/occlubench && cd occlubench
@@ -180,9 +181,42 @@ What runs where on the Warp path, per control step:
   when `privileged()`/`camera_calibration()` or CPU rendering asks for them. On-device policies (for example torch over
   DLPack) would remove the rest; not done yet.
 
-Measured on a CPU-only box (no GPU), CPU backend: gantry ~23 env-steps/s with two 96×96 CPU-rendered cameras. Physics
-only: gantry ~1,000 env-steps/s and Panda ~3,400 env-steps/s at 64 envs. CPU OSMesa rendering of the Panda meshes is
-slow (~4 env-steps/s). No GPU numbers have been measured yet, including for the v0.4 device IK.
+### GPU results (NVIDIA L40S)
+
+Measured 2026-10-22 on one **NVIDIA L40S 48 GB** (Brev, driver 565.57.01 / CUDA 12.7, Warp 1.18.0 `+cu12`,
+MuJoCo / MuJoCo Warp 3.16.0) with `bash scripts/brev_run.sh`. Full output: [`results/brev_20261022T054038Z/results.md`](results/brev_20261022T054038Z/results.md). Warp physics + Warp batch
+renderer, two 128×128 RGB cameras per env, device occluder/scoring/IK, 50 steps (wall time includes warm-up). These are
+**L40S** numbers, not H100/A100.
+
+| robot | n_envs | env-steps/s | GPU mem (MiB) |
+|---|---|---|---|
+| gantry | 64 | 870 | 515 |
+| gantry | 128 | 1,604 | 579 |
+| gantry | 256 | 2,703 | 675 |
+| gantry | 512 | 3,704 | 835 |
+| panda | 64 | 681 | 603 |
+| panda | 128 | 1,225 | 731 |
+| panda | 256 | 2,100 | 923 |
+| panda | 512 | 3,242 | 1,275 |
+
+Throughput is still rising at 512 envs and memory use is small (~1.3 GB for 512 Panda envs), so larger batches should
+scale further. For comparison, the CPU backend renders ~23 env-steps/s (gantry, two 96×96 cameras) and ~4 (Panda).
+
+Paired grid on the same L40S (ColorCue, gantry, 256 seeds per cell, 64×64, duration 0.25; drop with 95% CI):
+
+| camera | severity | onset 0.0 | onset 0.15 |
+|---|---|---|---|
+| third-person | 0.5 | +0.035 [+0.016, +0.059] | +0.000 |
+| third-person | 1.0 | +0.133 [+0.094, +0.176] | +0.000 |
+| wrist | 0.5 | +0.094 [+0.059, +0.129] | +0.000 |
+| wrist | 1.0 | +0.266 [+0.211, +0.320] | +0.000 |
+
+ColorCue (not learned) only fails when the cube is hidden before it localises it. Once it has a fix (onset 0.15) it
+ignores the occluder. Wrist occluders leak into the third-person view (mean 0.48–0.77, see
+[leakage analysis](docs/leakage_analysis.md)), which is why wrist drops are larger. A learned VLA is needed for
+meaningful onset effects.
+
+CPU-only box, CPU backend: physics only, gantry ~1,000 and Panda ~3,400 env-steps/s at 64 envs.
 
 ## Demonstrations, seed sets and the leaderboard
 
@@ -231,7 +265,8 @@ CI (GitHub Actions) runs ruff, the CPU tests, the Panda tests and the Warp-backe
 - [x] v0.4: Warp IK kernels (gantry + Panda DLS, parity tests), lazy state readback, Panda contact buffers sized
       (no nefc overflow); OpenVLA-OFT `oft` backend checked against the openvla-oft source, real `eef_state`
       (axis-angle orientation); scripted-demo generator; frozen v1 seed sets; leaderboard builder.
-- [ ] **GPU numbers:** run `brev_run.sh` on an H100/A100 and publish throughput and memory against `n_envs` and resolution.
+- [x] **GPU numbers (L40S):** throughput and memory against `n_envs` ([results](#gpu-results-nvidia-l40s)).
+- [ ] **H100/A100 numbers**, larger `n_envs` (1,024+) and resolution sweeps.
 - [ ] **Fully on-device step:** on-device policies via DLPack; optional Warp-segmentation coverage.
 - [ ] **First VLA numbers:** run the OpenVLA-OFT adapter end to end on a GPU, zero-shot and after fine-tuning.
 - [ ] **More tasks:** LIBERO-style tasks for the Panda (drawer, stacking); joint torque or OSC control modes.

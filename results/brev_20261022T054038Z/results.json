@@ -1,0 +1,174 @@
+{
+  "gpu": "NVIDIA L40S, 46068 MiB, 565.57.01",
+  "smoke": [
+    {
+      "robot": "gantry",
+      "n_envs": 64,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 869.7,
+      "wall_s": 3.61,
+      "host_peak_rss_mib": 1346.6,
+      "gpu": [
+        {
+          "used": 515,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "gantry",
+      "n_envs": 128,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 1604.3,
+      "wall_s": 3.91,
+      "host_peak_rss_mib": 1386.4,
+      "gpu": [
+        {
+          "used": 579,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "gantry",
+      "n_envs": 256,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 2702.9,
+      "wall_s": 4.64,
+      "host_peak_rss_mib": 1550.4,
+      "gpu": [
+        {
+          "used": 675,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "gantry",
+      "n_envs": 512,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 3704.1,
+      "wall_s": 6.77,
+      "host_peak_rss_mib": 1832.3,
+      "gpu": [
+        {
+          "used": 835,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "panda",
+      "n_envs": 64,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 680.9,
+      "wall_s": 4.61,
+      "host_peak_rss_mib": 1272.0,
+      "gpu": [
+        {
+          "used": 603,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "panda",
+      "n_envs": 128,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 1224.5,
+      "wall_s": 5.12,
+      "host_peak_rss_mib": 1313.8,
+      "gpu": [
+        {
+          "used": 731,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "panda",
+      "n_envs": 256,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 2099.8,
+      "wall_s": 5.97,
+      "host_peak_rss_mib": 1541.5,
+      "gpu": [
+        {
+          "used": 923,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    },
+    {
+      "robot": "panda",
+      "n_envs": 512,
+      "physics": "warp",
+      "render": "warp",
+      "image": [
+        128,
+        128
+      ],
+      "steps": 49,
+      "env_steps_per_s": 3242.1,
+      "wall_s": 7.74,
+      "host_peak_rss_mib": 2073.1,
+      "gpu": [
+        {
+          "used": 1275,
+          "total": 46068,
+          "name": "NVIDIA L40S"
+        }
+      ]
+    }
+  ],
+  "grid_markdown": "Warp 1.18.0 initialized:\n   CUDA Toolkit 12.9, Driver 12.7\n   Devices:\n     \"cpu\"      : \"x86_64\"\n     \"cuda:0\"   : \"NVIDIA L40S\" (44 GiB, sm_89, mempool enabled)\n   Kernel cache:\n     /home/ubuntu/.cache/warp/1.18.0\nModule mujoco_warp._src.render_util f1ec7f3 load on device 'cuda:0' took 0.29 ms  (cached)\nModule mujoco_warp._src.bvh 8857017 load on device 'cuda:0' took 0.29 ms  (cached)\nModule mujoco_warp._src.smooth 43a6a77 load on device 'cuda:0' took 5.87 ms  (cached)\nModule _build_megakernel__locals___render_megakernel_c2522ada 7c9957f load on device 'cuda:0' took 0.34 ms  (cached)\nModule occlubench.warp_ops 8379892 load on device 'cuda:0' took 0.50 ms  (cached)\nModule occlubench.warp_ik 430cff2 load on device 'cuda:0' took 0.32 ms  (cached)\nModule _nxn_broadphase__locals__kernel_db7eec52 db7eec5 load on device 'cuda:0' took 0.27 ms  (cached)\nModule _nxn_broadphase__locals__kernel_db7eec52 646c613 load on device 'cuda:0' took 0.23 ms  (cached)\nModule ccd_kernel_builder__locals__ccd_kernel_1a0e5f50 1a0e5f5 load on device 'cuda:0' took 0.41 ms  (cached)\nModule _primitive_narrowphase__locals__primitive_narrowphase_e80637b8 e80637b load on device 'cuda:0' took 0.42 ms  (cached)\nModule mujoco_warp._src.constraint 8d4d513 load on device 'cuda:0' took 0.22 ms  (cached)\nModule _equality_joint__locals__kernel_b016379a b016379 load on device 'cuda:0' took 0.26 ms  (cached)\nModule _friction_dof__locals__kernel_febe3015 febe301 load on device 'cuda:0' took 0.24 ms  (cached)\nModule _limit_slide_hinge__locals__kernel_b1bbc842 b1bbc84 load on device 'cuda:0' took 0.24 ms  (cached)\nModule _efc_contact_init__locals__kernel_50939fb1 50939fb load on device 'cuda:0' took 0.24 ms  (cached)\nModule _efc_contact_jac_dense__locals__kernel_6b457580 747ee66 load on device 'cuda:0' took 0.28 ms  (cached)\nModule _efc_contact_update__locals__kernel_fd314d91 fd314d9 load on device 'cuda:0' took 0.23 ms  (cached)\nModule mujoco_warp._src.forward 70fadf5 load on device 'cuda:0' took 0.38 ms  (cached)\nModule mujoco_warp._src.passive 0de6fd1 load on device 'cuda:0' took 0.40 ms  (cached)\nModule _qfrc_passive_kernel__locals__kernel_976399dd 976399d load on device 'cuda:0' took 0.23 ms  (cached)\nModule _qfrc_smooth__locals__kernel_8b823980 8b82398 load on device 'cuda:0' took 0.23 ms  (cached)\nModule mujoco_warp._src.support 970ef9a load on device 'cuda:0' took 0.24 ms  (cached)\nModule _small_cholesky_factorize_solve_block__locals__kernel_9da335f1 a5c2521 load on device 'cuda:0' took 0.24 ms  (cached)\nModule _tile_cholesky_factorize_solve_block__locals__kernel_0c2c6094 9ec93e8 load on device 'cuda:0' took 18.35 ms  (cached)\nModule _solve_init_dof__locals__kernel_60896b56 60896b5 load on device 'cuda:0' took 0.37 ms  (cached)\nModule mujoco_warp._src.solver e4420b7 load on device 'cuda:0' took 0.32 ms  (cached)\nModule _solve_init_jaref_kernel__locals__kernel_f7874db3 f7874db load on device 'cuda:0' took 0.25 ms  (cached)\nModule mul_m_kernel__locals___mul_m_f3de1cc7 f3de1cc load on device 'cuda:0' took 0.24 ms  (cached)\nModule _update_constraint_efc__locals__kernel_0539aa50 0539aa5 load on device 'cuda:0' took 0.24 ms  (cached)\nModule _update_constraint_init_qfrc_constraint_dense__locals__kernel_bd7ca2ec bd7ca2e load on device 'cuda:0' took 0.23 ms  (cached)\nModule _update_gradient_zero_grad_dot__locals__kernel_b20934d7 b20934d load on device 'cuda:0' took 0.24 ms  (cached)\nModule _update_gradient_grad__locals__kernel_c876081d c876081 load on device 'cuda:0' took 0.24 ms  (cached)\nModule _update_gradient_JTDAJ_dense_tiled__locals__kernel_89ae24a0 75af276 load on device 'cuda:0' took 0.54 ms  (cached)\nModule _update_gradient_cholesky__locals__kernel_ff0650a3 c471f17 load on device 'cuda:0' took 19.42 ms  (cached)\nModule _linesearch_iterative_kernel__locals__kernel_a0bc579a 60f0e21 load on device 'cuda:0' took 0.38 ms  (cached)\nModule _solve_done__locals__kernel_a46fb74d a46fb74 load on device 'cuda:0' took 0.27 ms  (cached)\nModule mujoco_warp._src.derivative 011f1dc load on device 'cuda:0' took 0.49 ms  (cached)\nModule _next_time_builder__locals___next_time_bc454e15 bc454e1 load on device 'cuda:0' took 0.27 ms  (cached)\n| condition | n | coverage (leak mean / max) | clean SR | pert SR | paired drop [95% CI] | P(pert ok given clean ok) [95% CI] | recovery steps [95% CI] |\n|---|---|---|---|---|---|---|---|\n| third_person_sev0.50_on0.00_dur0.25 | 256 | 0.37 (0.00 / 0.00) | 1.00 | 0.96 | +0.035 [+0.016, +0.059] | +0.965 [+0.941, +0.984] | +1.907 [+1.765, +2.049] |\n| third_person_sev0.50_on0.15_dur0.25 | 256 | 0.37 (0.00 / 0.00) | 1.00 | 1.00 | +0.000 [+0.000, +0.000] | +1.000 [+1.000, +1.000] | +0.000 [+0.000, +0.000] |\n| third_person_sev1.00_on0.00_dur0.25 | 256 | 0.77 (0.00 / 0.00) | 1.00 | 0.87 | +0.133 [+0.094, +0.176] | +0.867 [+0.824, +0.906] | +46.347 [+46.054, +46.644] |\n| third_person_sev1.00_on0.15_dur0.25 | 256 | 0.77 (0.00 / 0.00) | 1.00 | 1.00 | +0.000 [+0.000, +0.000] | +1.000 [+1.000, +1.000] | +0.000 [+0.000, +0.000] |\n| wrist_sev0.50_on0.00_dur0.25 | 256 | 0.38 (0.48 / 0.90) | 1.00 | 0.91 | +0.094 [+0.059, +0.129] | +0.906 [+0.871, +0.941] | +18.966 [+16.681, +21.233] |\n| wrist_sev0.50_on0.15_dur0.25 | 256 | 0.36 (0.49 / 0.72) | 1.00 | 1.00 | +0.000 [+0.000, +0.000] | +1.000 [+1.000, +1.000] | +0.000 [+0.000, +0.000] |\n| wrist_sev1.00_on0.00_dur0.25 | 256 | 0.77 (0.63 / 1.00) | 1.00 | 0.73 | +0.266 [+0.211, +0.320] | +0.734 [+0.680, +0.789] | +41.984 [+40.995, +42.878] |\n| wrist_sev1.00_on0.15_dur0.25 | 256 | 0.77 (0.77 / 1.00) | 1.00 | 1.00 | +0.000 [+0.000, +0.000] | +1.000 [+1.000, +1.000] | +0.000 [+0.000, +0.000] |\n"
+}
