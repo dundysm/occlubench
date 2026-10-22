@@ -1,0 +1,183 @@
+{
+  "version": "v1",
+  "seeds_per_cell": 1024,
+  "master_seed": 20261022,
+  "cells": {
+    "third_person_sev0.50_on0.15_dur0.25": {
+      "file": "third_person_sev0.50_on0.15_dur0.25.json",
+      "sha256": "e697298e0b9b50a2a7f88d2de11a6a6326731e1e0960216505af0e973eda4971",
+      "condition": {
+        "camera": "third_person",
+        "severity": 0.5,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "third_person_sev0.50_on0.45_dur0.25": {
+      "file": "third_person_sev0.50_on0.45_dur0.25.json",
+      "sha256": "10cd100028c952c0e64778430f28b752ad52d20d456d48057ac5319a09f8ecb7",
+      "condition": {
+        "camera": "third_person",
+        "severity": 0.5,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "third_person_sev1.00_on0.15_dur0.25": {
+      "file": "third_person_sev1.00_on0.15_dur0.25.json",
+      "sha256": "5d572b7d767dccf8b030259616fe5960e9335ca151166620d2c5212d7876d905",
+      "condition": {
+        "camera": "third_person",
+        "severity": 1.0,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "third_person_sev1.00_on0.45_dur0.25": {
+      "file": "third_person_sev1.00_on0.45_dur0.25.json",
+      "sha256": "fdb56f7697a4f17fffdcd27757aeb3cef52479ad9fe1d3548f292a24c7a8050e",
+      "condition": {
+        "camera": "third_person",
+        "severity": 1.0,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "wrist_sev0.50_on0.15_dur0.25": {
+      "file": "wrist_sev0.50_on0.15_dur0.25.json",
+      "sha256": "724462ded3358e88ae8edcf640a2bf8c549f856de20f65ea050eeba6052e35b6",
+      "condition": {
+        "camera": "wrist",
+        "severity": 0.5,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "wrist_sev0.50_on0.45_dur0.25": {
+      "file": "wrist_sev0.50_on0.45_dur0.25.json",
+      "sha256": "783c0cb5f6297d251f5916319952ed9ab51af146c33264140a482885177b8641",
+      "condition": {
+        "camera": "wrist",
+        "severity": 0.5,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "wrist_sev1.00_on0.15_dur0.25": {
+      "file": "wrist_sev1.00_on0.15_dur0.25.json",
+      "sha256": "9f0346285f87c1ed8dd81b061fc2bfe2ed50364214ea6c8e38e6421f60379b99",
+      "condition": {
+        "camera": "wrist",
+        "severity": 1.0,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "wrist_sev1.00_on0.45_dur0.25": {
+      "file": "wrist_sev1.00_on0.45_dur0.25.json",
+      "sha256": "5eead5ceeedf2588d4df705f45e386ee630f0974522d342b2172ccd842452716",
+      "condition": {
+        "camera": "wrist",
+        "severity": 1.0,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "camera"
+      }
+    },
+    "third_person_sev0.50_on0.15_dur0.25_world": {
+      "file": "third_person_sev0.50_on0.15_dur0.25_world.json",
+      "sha256": "0c9dfb3652f9312981e011e916858fa15197f362169f3ce6187b722668765376",
+      "condition": {
+        "camera": "third_person",
+        "severity": 0.5,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "third_person_sev0.50_on0.45_dur0.25_world": {
+      "file": "third_person_sev0.50_on0.45_dur0.25_world.json",
+      "sha256": "d0886ded88af90b0e40e08e46e266152e83ed6f6cc68b16cf86caff2428c179e",
+      "condition": {
+        "camera": "third_person",
+        "severity": 0.5,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "third_person_sev1.00_on0.15_dur0.25_world": {
+      "file": "third_person_sev1.00_on0.15_dur0.25_world.json",
+      "sha256": "ff5ca8f8892ac0cf6f2284c75764104887ea729cbc2e9fc2bfd284066152fd45",
+      "condition": {
+        "camera": "third_person",
+        "severity": 1.0,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "third_person_sev1.00_on0.45_dur0.25_world": {
+      "file": "third_person_sev1.00_on0.45_dur0.25_world.json",
+      "sha256": "fbdf37b29dfd114790d6ba57ea93cd8fb02d9944edb72efb44047f9e693d4953",
+      "condition": {
+        "camera": "third_person",
+        "severity": 1.0,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "wrist_sev0.50_on0.15_dur0.25_world": {
+      "file": "wrist_sev0.50_on0.15_dur0.25_world.json",
+      "sha256": "cefe36b002a69533012391846b1398a2d64d9859c719528c2371f9aa4907bff0",
+      "condition": {
+        "camera": "wrist",
+        "severity": 0.5,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "wrist_sev0.50_on0.45_dur0.25_world": {
+      "file": "wrist_sev0.50_on0.45_dur0.25_world.json",
+      "sha256": "315e39ef99a75571944f314b835ed7dbe5ca1d5154c6704c4fc1636a27355e45",
+      "condition": {
+        "camera": "wrist",
+        "severity": 0.5,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "wrist_sev1.00_on0.15_dur0.25_world": {
+      "file": "wrist_sev1.00_on0.15_dur0.25_world.json",
+      "sha256": "2b8d1f7c9aaafb7c3227c15619e88193fb9f5c003572d448159571c1a0bf7705",
+      "condition": {
+        "camera": "wrist",
+        "severity": 1.0,
+        "onset": 0.15,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    },
+    "wrist_sev1.00_on0.45_dur0.25_world": {
+      "file": "wrist_sev1.00_on0.45_dur0.25_world.json",
+      "sha256": "c3d67fdec76e2599f7e78f239a2dc8b70582c352a53155fa880939cf26cdb216",
+      "condition": {
+        "camera": "wrist",
+        "severity": 1.0,
+        "onset": 0.45,
+        "duration": 0.25,
+        "anchor": "world"
+      }
+    }
+  }
+}

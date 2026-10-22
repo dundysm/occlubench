@@ -24,7 +24,7 @@ Homepage = "https://github.com/dundysm/occlubench"
 include = ["occlubench*"]
 
 [tool.setuptools.package-data]
-occlubench = ["assets/*.xml"]
+occlubench = ["assets/*.xml", "seedsets_v1/*.json"]
 
 [tool.ruff]
 line-length = 120
