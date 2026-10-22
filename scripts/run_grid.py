@@ -19,10 +19,12 @@ POLICIES = {
     "oracle": ScriptedOracle,
     "colorcue": ColorCuePolicy,
     "colorcue_memory": lambda: ColorCuePolicy(memory=True),
-    # OpenVLA-OFT: OCCLUBENCH_VLA_BACKEND=hf|oft, OCCLUBENCH_VLA_MODEL=<hf id or local path>
+    # OpenVLA-OFT: OCCLUBENCH_VLA_BACKEND=hf|oft|server, OCCLUBENCH_VLA_MODEL=<hf id or local path>
     "openvla_oft": lambda: OpenVLAOFTPolicy(
         backend=os.environ.get("OCCLUBENCH_VLA_BACKEND", "oft"),
         model_id=os.environ.get("OCCLUBENCH_VLA_MODEL", "moojink/openvla-7b-oft-finetuned-libero-spatial"),
+        unnorm_key=os.environ.get("OCCLUBENCH_VLA_UNNORM_KEY", "libero_spatial_no_noops"),
+        server_url=os.environ.get("OCCLUBENCH_VLA_SERVER", "http://127.0.0.1:8777/act"),
     ),
     "openvla_oft_mock": lambda: OpenVLAOFTPolicy(backend="mock"),
 }

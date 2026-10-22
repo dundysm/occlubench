@@ -166,6 +166,30 @@ def unnormalize_actions(a, q01, q99, mask=None):
     return np.where(mask, 0.5 * (a + 1.0) * (q99 - q01) + q01, a)
 
 
+def _np_encode(o):
+    """json_numpy wire format: {"__numpy__": base64 bytes, "dtype": str, "shape": list}."""
+    import base64
+
+    if isinstance(o, np.ndarray):
+        a = np.ascontiguousarray(o)
+        return {"__numpy__": base64.b64encode(a.tobytes()).decode(), "dtype": a.dtype.str, "shape": list(a.shape)}
+    if isinstance(o, np.generic):
+        return o.item()
+    raise TypeError(f"cannot encode {type(o)}")
+
+
+def _np_decode(o):
+    import base64
+
+    if isinstance(o, dict) and "__numpy__" in o:
+        return np.frombuffer(base64.b64decode(o["__numpy__"]), dtype=np.dtype(o["dtype"])).reshape(o["shape"])
+    if isinstance(o, list):
+        return [_np_decode(x) for x in o]
+    if isinstance(o, dict):
+        return {k: _np_decode(v) for k, v in o.items()}
+    return o
+
+
 class OpenVLAOFTPolicy:
     """OpenVLA-OFT adapter (https://github.com/moojink/openvla-oft).
 
@@ -185,6 +209,11 @@ class OpenVLAOFTPolicy:
       * ``"hf"``: Hugging Face ``transformers`` (lazy import) ``AutoModelForVision2Seq`` with
         ``trust_remote_code=True``; calls ``model.predict_action``. If ``outputs_normalized``
         the adapter unnormalises with ``norm_stats`` (or ``model.norm_stats[unnorm_key]``).
+      * ``"server"``: POSTs observations to openvla-oft's ``vla-scripts/deploy.py`` server
+        (``server_url``, default ``http://127.0.0.1:8777/act``) in the same json_numpy wire format
+        as ``experiments.robot.openvla_utils.get_action_from_server``. The model runs in its own
+        process/venv, which avoids loading TensorFlow and MuJoCo into one process (they crash
+        together on some builds). Needs no ML dependencies on the OccluBench side.
       * ``"oft"``: the openvla-oft repo's own loaders (``experiments.robot.openvla_utils``:
         ``get_vla``, ``get_processor``, ``get_action_head``, ``get_proprio_projector``,
         ``get_vla_action``), which add the L1 action head and proprio projector the OFT
@@ -214,8 +243,9 @@ class OpenVLAOFTPolicy:
         invert_gripper: bool = True,
         binarize_gripper: bool = True,
         seed: int = 0,
+        server_url: str = "http://127.0.0.1:8777/act",
     ):
-        if backend not in ("mock", "hf", "oft"):
+        if backend not in ("mock", "hf", "oft", "server"):
             raise ValueError(f"unknown backend {backend!r}")
         self.model_id, self.backend, self.device = model_id, backend, device
         self.instruction, self.unnorm_key = instruction, unnorm_key
@@ -224,6 +254,7 @@ class OpenVLAOFTPolicy:
         self.open_loop_steps = open_loop_steps or chunk
         self.delta_scale, self.outputs_normalized, self.invert_gripper = delta_scale, outputs_normalized, invert_gripper
         self.binarize_gripper = binarize_gripper
+        self.server_url = server_url
         self.seed = seed
         self._model = None
         if backend == "mock" and norm_stats is None:
@@ -231,7 +262,7 @@ class OpenVLAOFTPolicy:
 
     # ---------------------------------------------------------------- model loading (lazy)
     def _load(self):
-        if self._model is not None or self.backend == "mock":
+        if self._model is not None or self.backend in ("mock", "server"):
             return
         if self.backend == "hf":
             import torch
@@ -301,6 +332,14 @@ class OpenVLAOFTPolicy:
             raw = np.sin(0.7 * k + 1.3 * j + self.seed + self._calls)
             self._calls += 1
             return unnormalize_actions(raw, **self.norm_stats)
+        if self.backend == "server":
+            payload = dict(
+                full_image=np.ascontiguousarray(full_image, np.uint8),
+                wrist_image=np.ascontiguousarray(wrist_image, np.uint8),
+                state=self._state(eef_state),
+                instruction=self.instruction,
+            )
+            return np.asarray(self._post(payload), float).reshape(-1, self.action_dim)
         self._load()
         full, wrist = self._resize(full_image), self._resize(wrist_image)
         if self.backend == "oft":
@@ -329,6 +368,21 @@ class OpenVLAOFTPolicy:
                 a, **{k: self.norm_stats[k] for k in ("q01", "q99")}, mask=self.norm_stats.get("mask")
             )
         return a
+
+    def _post(self, payload: dict):
+        """json_numpy-compatible request/response (double-encoded, as deploy.py expects)."""
+        import json
+        import urllib.request
+
+        body = json.dumps({"encoded": json.dumps(payload, default=_np_encode)}).encode()
+        req = urllib.request.Request(self.server_url, body, {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            out = json.loads(r.read())
+        if out == "error":
+            raise RuntimeError(f"policy server at {self.server_url} returned an error (see its log)")
+        if isinstance(out, str):  # double-encoded response
+            out = json.loads(out)
+        return _np_decode(out)
 
     def to_env_action(self, delta, tcp, yaw, robot):
         """(N, 7) model deltas -> (N, robot.action_dim) absolute OccluBench actions."""

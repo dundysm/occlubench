@@ -179,3 +179,41 @@ def test_openvla_oft_backend_calls_match_openvla_oft(monkeypatch):
         assert hasattr(cfg, k)
     assert cfg.num_images_in_input == 2 and cfg.model_family == "openvla"
     np.testing.assert_array_equal(seen["state"], np.arange(8.0))
+
+
+def test_openvla_oft_server_backend_wire_format():
+    """A fake deploy.py /act server speaking the json_numpy double-encoded format."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from occlubench.policies import _np_decode, _np_encode
+
+    got = {}
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            obs = _np_decode(json.loads(body["encoded"]))
+            got.update(obs)
+            acts = [np.full(7, 0.25, np.float32) for _ in range(8)]
+            out = json.dumps(json.dumps(acts, default=_np_encode)).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        pol = OpenVLAOFTPolicy(backend="server", server_url=f"http://127.0.0.1:{srv.server_port}/act")
+        img = np.random.default_rng(0).integers(0, 255, (16, 16, 3)).astype(np.uint8)
+        ch = pol.predict_chunk(img, img, np.arange(8.0))
+    finally:
+        srv.shutdown()
+    assert ch.shape == (8, 7) and np.allclose(ch, 0.25)
+    np.testing.assert_array_equal(got["full_image"], img)
+    assert got["instruction"].startswith("pick up") and got["state"].shape == (8,)
