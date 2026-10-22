@@ -13,10 +13,18 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 
 from occlubench import condition_grid, run_paired, summarize  # noqa: E402
 from occlubench.metrics import format_table  # noqa: E402
-from occlubench.policies import ColorCuePolicy, OpenVLAOFTPolicy, ScriptedOracle  # noqa: E402
+from occlubench.policies import (  # noqa: E402
+    BlindScriptPolicy,
+    ColorCuePolicy,
+    OpenVLAOFTPolicy,
+    RandomPolicy,
+    ScriptedOracle,
+)
 
 POLICIES = {
     "oracle": ScriptedOracle,
+    "blind": BlindScriptPolicy,
+    "random": RandomPolicy,
     "colorcue": ColorCuePolicy,
     "colorcue_memory": lambda: ColorCuePolicy(memory=True),
     # OpenVLA-OFT: OCCLUBENCH_VLA_BACKEND=hf|oft|server, OCCLUBENCH_VLA_MODEL=<hf id or local path>

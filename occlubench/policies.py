@@ -103,6 +103,47 @@ class ScriptedOracle:
         return self.script.act(tcp, st["cube_pos"], st["goal_pos"], np.ones(len(tcp), bool), env.robot, yaw)
 
 
+class BlindScriptPolicy:
+    """No vision. Runs the pick-and-place script at the centre of the cube spawn region (yaw 0).
+    It succeeds only when the cube happens to spawn close enough to the centre, so its paired drop
+    should be ~0: a floor showing what a policy gets without looking."""
+
+    uses_privileged_state = False
+
+    def reset(self, n: int):
+        self.script = _PickPlaceScript(n)
+
+    def act(self, obs, env):
+        from occlubench.scene import SPAWN_HIGH, SPAWN_LOW
+
+        self.script.carry_scale = env.robot.carry_scale
+        tcp = obs["proprio"][:, :3]
+        n = len(tcp)
+        c = (SPAWN_LOW + SPAWN_HIGH) / 2
+        cube = np.tile([c[0], c[1], CUBE_Z], (n, 1))
+        goal = np.tile(env.goal, (n, 1))  # the goal disc is fixed and known, like the task text
+        return self.script.act(tcp, cube, goal, np.ones(n, bool), env.robot, np.zeros(n))
+
+
+class RandomPolicy:
+    """Uniformly random tcp targets in the workspace and random gripper commands (seeded)."""
+
+    uses_privileged_state = False
+
+    def __init__(self, seed: int = 0):
+        self.seed = seed
+
+    def reset(self, n: int):
+        self.rng = np.random.default_rng(self.seed)
+
+    def act(self, obs, env):
+        n = len(obs["proprio"])
+        xyz = self.rng.uniform([-0.3, -0.3, TABLE_TOP_Z + 0.01], [0.3, 0.3, TABLE_TOP_Z + 0.25], (n, 3))
+        out = env.robot.default_action(xyz, 0.0, self.rng.uniform(-np.pi / 4, np.pi / 4, n))
+        out[:, -1] = self.rng.choice([-1.0, 1.0], n)
+        return out
+
+
 class ColorCuePolicy:
     """Pixels + proprio only. Re-localises the cube every step while approaching it.
 
