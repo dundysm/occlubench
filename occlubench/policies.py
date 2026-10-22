@@ -170,8 +170,10 @@ class OpenVLAOFTPolicy:
     """OpenVLA-OFT adapter (https://github.com/moojink/openvla-oft).
 
     Observation mapping: ``third_person`` -> ``full_image`` and ``wrist`` -> ``wrist_image``
-    (resized to ``image_size``), proprio -> 8-D ``state`` laid out like LIBERO (tcp xyz, 3 zeros
-    for orientation, finger width twice). The model predicts a chunk of ``chunk`` end-effector
+    (resized to ``image_size``; the ``oft`` backend uses openvla-oft's own JPEG + Lanczos
+    ``resize_image_for_policy`` so inputs match its training pipeline), ``obs["eef_state"]`` ->
+    8-D ``state`` laid out like LIBERO (tcp xyz, tcp axis-angle, two finger joint positions;
+    see ``OccluEnv.eef_state``). The model predicts a chunk of ``chunk`` end-effector
     deltas ``(dx, dy, dz, droll, dpitch, dyaw, gripper)``. The adapter executes the first
     ``open_loop_steps`` of each chunk, integrating the position delta (times ``delta_scale``)
     into OccluBench's absolute tcp target and the yaw delta into the Panda's yaw target.
@@ -210,6 +212,7 @@ class OpenVLAOFTPolicy:
         delta_scale: float = 1.0,
         outputs_normalized: bool = False,
         invert_gripper: bool = True,
+        binarize_gripper: bool = True,
         seed: int = 0,
     ):
         if backend not in ("mock", "hf", "oft"):
@@ -220,6 +223,7 @@ class OpenVLAOFTPolicy:
         self.chunk, self.action_dim, self.image_size = chunk, action_dim, image_size
         self.open_loop_steps = open_loop_steps or chunk
         self.delta_scale, self.outputs_normalized, self.invert_gripper = delta_scale, outputs_normalized, invert_gripper
+        self.binarize_gripper = binarize_gripper
         self.seed = seed
         self._model = None
         if backend == "mock" and norm_stats is None:
@@ -244,7 +248,11 @@ class OpenVLAOFTPolicy:
 
             from experiments.robot import openvla_utils as ou
 
+            # Fields read by openvla_utils.get_vla / get_action_head / get_proprio_projector /
+            # get_vla_action (checked against moojink/openvla-oft main, experiments/robot/*.py).
+            # Note: openvla-oft places the model on its module-level DEVICE (cuda:0), not self.device.
             self._cfg = SimpleNamespace(
+                model_family="openvla",
                 pretrained_checkpoint=self.model_id,
                 use_l1_regression=True,
                 use_diffusion=False,
@@ -256,24 +264,36 @@ class OpenVLAOFTPolicy:
                 unnorm_key=self.unnorm_key,
                 load_in_8bit=False,
                 load_in_4bit=False,
+                lora_rank=32,
+                num_diffusion_steps_train=50,
+                num_diffusion_steps_inference=50,
             )
             self._model = ou.get_vla(self._cfg)
+            # Same fallback as experiments/robot/libero/run_libero_eval.py::validate_config.
+            stats = self._model.norm_stats
+            if self.unnorm_key not in stats and f"{self.unnorm_key}_no_noops" in stats:
+                self._cfg.unnorm_key = self.unnorm_key = f"{self.unnorm_key}_no_noops"
+            if self.unnorm_key not in stats:
+                raise KeyError(f"unnorm_key {self.unnorm_key!r} not in checkpoint stats {sorted(stats)}")
             self._processor = ou.get_processor(self._cfg)
             self._action_head = ou.get_action_head(self._cfg, self._model.llm_dim)
             self._proprio = ou.get_proprio_projector(self._cfg, self._model.llm_dim, proprio_dim=8)
             self._ou = ou
 
     # ---------------------------------------------------------------- inference
-    def _state(self, proprio):
-        p = np.asarray(proprio, float)
-        return np.concatenate([p[:3], np.zeros(3), [p[3], p[3]]])
+    def _state(self, eef_state):
+        s = np.asarray(eef_state, float)
+        assert s.shape == (8,), "expects OccluEnv.eef_state(): xyz, axis-angle, 2 finger joints"
+        return s
 
     def _resize(self, img):
+        if self.backend == "oft":
+            return self._ou.resize_image_for_policy(img, self.image_size)
         from PIL import Image
 
         return np.asarray(Image.fromarray(img).resize((self.image_size, self.image_size), Image.BILINEAR))
 
-    def predict_chunk(self, full_image, wrist_image, proprio) -> np.ndarray:
+    def predict_chunk(self, full_image, wrist_image, eef_state) -> np.ndarray:
         """One env. Returns (chunk, action_dim) unnormalised end-effector deltas + gripper in [0, 1]."""
         if self.backend == "mock":
             k = np.arange(self.chunk)[:, None]
@@ -284,7 +304,7 @@ class OpenVLAOFTPolicy:
         self._load()
         full, wrist = self._resize(full_image), self._resize(wrist_image)
         if self.backend == "oft":
-            obs = dict(full_image=full, wrist_image=wrist, state=self._state(proprio))
+            obs = dict(full_image=full, wrist_image=wrist, state=self._state(eef_state))
             acts = self._ou.get_vla_action(
                 self._cfg,
                 self._model,
@@ -314,6 +334,8 @@ class OpenVLAOFTPolicy:
         """(N, 7) model deltas -> (N, robot.action_dim) absolute OccluBench actions."""
         target = tcp + self.delta_scale * delta[:, :3]
         g = np.clip(delta[:, 6], 0.0, 1.0) * 2.0 - 1.0  # 1 = open in the model convention
+        if self.binarize_gripper:  # as experiments/robot/robot_utils.normalize_gripper_action
+            g = np.where(g >= 0, 1.0, -1.0)
         grip = -g if self.invert_gripper else g
         out = robot.default_action(target, 0.0, yaw)
         out[:, -1] = grip
@@ -328,10 +350,11 @@ class OpenVLAOFTPolicy:
 
     def act(self, obs, env):
         rgb, prop = obs["rgb"], obs["proprio"]
+        eef = obs["eef_state"]
         deltas = np.empty((self.n, self.action_dim))
         for i in range(self.n):
             if not self._queue[i]:
-                ch = self.predict_chunk(rgb["third_person"][i], rgb["wrist"][i], prop[i])
+                ch = self.predict_chunk(rgb["third_person"][i], rgb["wrist"][i], eef[i])
                 self._queue[i] = list(ch[: self.open_loop_steps])
             deltas[i] = self._queue[i].pop(0)
         self._yaw = self._yaw + deltas[:, 5]

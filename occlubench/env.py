@@ -40,6 +40,20 @@ from occlubench.scene import (
 )
 
 
+def rotmat_to_axisangle(r: np.ndarray) -> np.ndarray:
+    """(N, 3, 3) rotation matrices -> (N, 3) axis * angle, angle in [0, pi]."""
+    out = np.zeros((len(r), 3))
+    q = np.zeros(4)
+    for i, m in enumerate(r):
+        mujoco.mju_mat2Quat(q, np.ascontiguousarray(m, float).reshape(9))
+        w = np.clip(q[0], -1.0, 1.0)
+        if w < 0:  # q and -q are the same rotation; pick the angle in [0, pi]
+            q, w = -q, -w
+        s = np.sqrt(max(1.0 - w * w, 0.0))
+        out[i] = 0.0 if s < 1e-9 else q[1:] * (2.0 * np.arccos(w) / s)
+    return out
+
+
 def is_success(cube_pos: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
     """Cube resting on the table within GOAL_RADIUS of the goal centre. Shapes (N, 3)."""
     dxy = np.linalg.norm(cube_pos[:, :2] - goal_pos[None, :2], axis=1)
@@ -521,8 +535,24 @@ class OccluEnv:
             out[c] = np.clip(rgb, 0, 255).astype(np.uint8)
         return out
 
+    def eef_state(self) -> np.ndarray:
+        """(N, 8) LIBERO-style end-effector state: tcp xyz, tcp orientation as an axis-angle
+        vector (world frame, like robosuite's ``quat2axisangle(eef_quat)``), and the two finger
+        joint positions (Panda: finger_joint1/2; gantry: (w, -w) from its single finger joint).
+        Proprioception only (no object state); used for the VLA ``state`` input."""
+        st = self.state
+        aa = rotmat_to_axisangle(st["tcp_mat"])
+        q = st["qpos"]
+        r = self.robot
+        if r.name == "panda":
+            fingers = q[:, [r.finger_qadr, r.finger_qadr + 1]]
+        else:
+            w = q[:, r.qadr[3]]
+            fingers = np.stack([w, -w], 1)
+        return np.concatenate([st["tcp_pos"], aa, fingers], 1)
+
     def _obs(self) -> dict:
-        return dict(rgb=self.render(), proprio=self.proprio(), t=self.t)
+        return dict(rgb=self.render(), proprio=self.proprio(), eef_state=self.eef_state(), t=self.t)
 
     def close(self):
         if self._renderer is not None:
