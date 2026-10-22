@@ -35,9 +35,19 @@ echo "== venv" | tee -a "$OUT/log.txt"
 source .venv/bin/activate
 pip install -q --upgrade pip
 pip install -q -e ".[dev,warp]"
+# PyPI warp-lang wheels target CUDA 13; drivers older than that (e.g. 12.x on many Brev images)
+# silently fall back to CPU. Swap in the matching +cu12 wheel from the Warp GitHub release.
+DRV_CUDA="$(nvidia-smi | sed -n 's/.*CUDA Version: *\([0-9]*\)\..*/\1/p' | head -1)"
+if [ -n "$DRV_CUDA" ] && [ "$DRV_CUDA" -lt 13 ]; then
+  WV="$(python -c 'import importlib.metadata as m;print(m.version("warp-lang").split("+")[0])')"
+  echo "driver CUDA $DRV_CUDA < 13: installing warp-lang $WV+cu12" | tee -a "$OUT/log.txt"
+  pip install -q --force-reinstall --no-deps \
+    "https://github.com/NVIDIA/warp/releases/download/v${WV}/warp_lang-${WV}+cu12-py3-none-manylinux_2_28_$(uname -m).whl"
+fi
 python - <<'PY' | tee -a "$OUT/log.txt"
 import mujoco, warp as wp, mujoco_warp
 wp.init()
+assert wp.is_cuda_available(), "Warp sees no CUDA device (driver/wheel mismatch?)"
 print("mujoco", mujoco.__version__, "| warp", wp.__version__, "| devices", [str(d) for d in wp.get_devices()])
 PY
 python -m occlubench.menagerie | tee -a "$OUT/log.txt"   # fetch the Panda model once
