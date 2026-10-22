@@ -65,3 +65,17 @@ def test_panda_render_and_occluder():
     assert obs["rgb"]["wrist"].shape == (2, 48, 48, 3) and obs["proprio"].shape == (2, 12)
     assert env.coverage_onset[0] > 0.95
     env.close()
+
+
+def test_panda_device_ik_parity():
+    pytest.importorskip("mujoco_warp")
+    from test_warp_ik import ik_parity
+
+    assert ik_parity("panda") < 2e-4
+
+
+def test_panda_oracle_device_ik():
+    pytest.importorskip("mujoco_warp")
+    from test_warp_ik import oracle_success
+
+    assert (oracle_success("panda", True) >= 0).all()

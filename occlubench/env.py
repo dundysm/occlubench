@@ -99,10 +99,12 @@ class _WarpBackend:
         d0 = mujoco.MjData(env.m)
         mujoco.mj_forward(env.m, d0)
         self.m = mjw.put_model(env.m)
-        self.d = mjw.put_data(env.m, d0, nworld=env.n)
+        # Contact buffers sized for the Panda (fingers + cube + table); the default njmax=64 overflows.
+        self.d = mjw.put_data(env.m, d0, nworld=env.n, nconmax=64, njmax=256)
         self.cam_idx = [env.ids.cams[c] for c in CAMERAS]
         self.jacp = wp.zeros((env.n, 3, env.m.nv), dtype=float)
         self.jacr = wp.zeros((env.n, 3, env.m.nv), dtype=float)
+        self.point = wp.zeros(env.n, dtype=wp.vec3)
         self.body = wp.array(np.full(env.n, env.m.site_bodyid[env.ids.tcp_site], np.int32), dtype=wp.int32)
 
     def _assign(self, name, host):
@@ -124,7 +126,8 @@ class _WarpBackend:
         self.d.time.zero_()
 
     def write(self, ctrl, mocap_pos=None, mocap_quat=None):
-        self._assign("ctrl", ctrl)
+        if ctrl is not None:  # None when ctrl was written on-device (warp_ik)
+            self._assign("ctrl", ctrl)
         if mocap_pos is not None:  # None when the occluder pose is written on-device (warp_ops)
             self._assign("mocap_pos", mocap_pos)
             self._assign("mocap_quat", mocap_quat)
@@ -134,28 +137,27 @@ class _WarpBackend:
             self.mjw.step(self.m, self.d)
 
     def refresh(self, need_jac):
-        e, mjw = self.env, self.mjw
+        e, mjw, wp = self.env, self.mjw, self.wp
         mjw.kinematics(self.m, self.d)
         mjw.camlight(self.m, self.d)
-        site_xpos = self.d.site_xpos.numpy()
-        jac = None
         if need_jac:
             mjw.com_pos(self.m, self.d)
-            point = self.wp.array(site_xpos[:, e.ids.tcp_site].astype(np.float32), dtype=self.wp.vec3)
-            mjw.jac(self.m, self.d, self.jacp, self.jacr, point, self.body)
-            jac = np.concatenate([self.jacp.numpy(), self.jacr.numpy()], 1)
-        xpos, xmat = self.d.xpos.numpy(), self.d.xmat.numpy()
-        cam_xpos, cam_xmat = self.d.cam_xpos.numpy(), self.d.cam_xmat.numpy()
-        return dict(
-            qpos=self.d.qpos.numpy().astype(float),
-            cube_pos=xpos[:, e.ids.cube_body].astype(float),
-            cube_mat=xmat[:, e.ids.cube_body].reshape(-1, 3, 3).astype(float),
-            tcp_pos=site_xpos[:, e.ids.tcp_site].astype(float),
-            tcp_mat=self.d.site_xmat.numpy()[:, e.ids.tcp_site].reshape(-1, 3, 3).astype(float),
-            cam_pos=cam_xpos[:, self.cam_idx].astype(float),
-            cam_mat=cam_xmat[:, self.cam_idx].reshape(-1, len(CAMERAS), 3, 3).astype(float),
-            jac=jac,
+            from occlubench.warp_ik import tcp_point
+
+            wp.launch(tcp_point, dim=e.n, inputs=[self.d.site_xpos, int(e.ids.tcp_site), self.point])
+            mjw.jac(self.m, self.d, self.jacp, self.jacr, self.point, self.body)
+        d, tcp, cube, nc = self.d, e.ids.tcp_site, e.ids.cube_body, len(CAMERAS)
+        getters = dict(
+            qpos=lambda: d.qpos.numpy().astype(float),
+            cube_pos=lambda: d.xpos.numpy()[:, cube].astype(float),
+            cube_mat=lambda: d.xmat.numpy()[:, cube].reshape(-1, 3, 3).astype(float),
+            tcp_pos=lambda: d.site_xpos.numpy()[:, tcp].astype(float),
+            tcp_mat=lambda: d.site_xmat.numpy()[:, tcp].reshape(-1, 3, 3).astype(float),
+            cam_pos=lambda: d.cam_xpos.numpy()[:, self.cam_idx].astype(float),
+            cam_mat=lambda: d.cam_xmat.numpy()[:, self.cam_idx].reshape(-1, nc, 3, 3).astype(float),
+            jac=(lambda: np.concatenate([self.jacp.numpy(), self.jacr.numpy()], 1)) if need_jac else (lambda: None),
         )
+        return _LazyInfo(**getters)
 
 
 class _LazyInfo(Mapping):
@@ -187,6 +189,7 @@ class OccluEnv:
         robot: str = "gantry",
         substeps: int = 10,
         device_ops: bool | None = None,
+        device_ik: bool | None = None,
     ):
         self.n, self.horizon, self.substeps = n_envs, horizon, substeps
         self.h, self.w = image_size
@@ -208,6 +211,17 @@ class OccluEnv:
             from occlubench.warp_ops import DeviceOccluder
 
             self._dev = DeviceOccluder(self, self.backend.d)
+        # Robot IK (action -> ctrl): Warp kernels on the Warp path (default), NumPy otherwise.
+        if device_ik is None:
+            device_ik = physics == "warp"
+        if device_ik and physics != "warp":
+            raise ValueError("device_ik=True requires physics='warp'")
+        self._ik = None
+        if device_ik:
+            from occlubench.warp_ik import DeviceIK
+
+            self._ik = DeviceIK(self, self.backend)
+        self._ctrl = None
         self._renderer = mujoco.Renderer(self.m, self.h, self.w) if render == "cpu" else None
         self._host = None  # host MjData mirror used only for CPU rendering on the Warp path
         self._rc = None
@@ -399,11 +413,17 @@ class OccluEnv:
         else:
             self._place_occluders()
             self._measure_coverage()
-        self.ctrl = self.robot.ctrl(action, st["qpos"], st["tcp_pos"], st["tcp_mat"], st["jac"])
-        if self._dev is not None:
-            self.backend.write(self.ctrl)
+        if self._ik is not None:
+            self._ik.write(action)  # ctrl computed and written on device
+            self._ctrl = None
+            if self._dev is None:
+                self.backend.write(None, self.mocap_pos, self.mocap_quat)
         else:
-            self.backend.write(self.ctrl, self.mocap_pos, self.mocap_quat)
+            self.ctrl = self.robot.ctrl(action, st["qpos"], st["tcp_pos"], st["tcp_mat"], st["jac"])
+            if self._dev is not None:
+                self.backend.write(self.ctrl)
+            else:
+                self.backend.write(self.ctrl, self.mocap_pos, self.mocap_quat)
         self.backend.step(self.substeps)
         self.state = self.backend.refresh(self.robot.needs_jacobian)
         self.t += 1
@@ -422,6 +442,17 @@ class OccluEnv:
         self._success_step[newly] = self.t
         info = dict(success=succ, ever_success=self._success_step >= 0, occluder_active=self._active.copy())
         return self._obs(), done, info
+
+    @property
+    def ctrl(self) -> np.ndarray:
+        """Last actuator controls (N, nu). Read back from the device lazily on the device-IK path."""
+        if self._ctrl is None:
+            self._ctrl = self.backend.d.ctrl.numpy().astype(float)
+        return self._ctrl
+
+    @ctrl.setter
+    def ctrl(self, v):
+        self._ctrl = v
 
     # ------------------------------------------------------------------ obs
     def occluder_active(self) -> np.ndarray:
