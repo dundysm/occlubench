@@ -7,10 +7,12 @@ simulated object (a mocap plate, rendered by every camera) slides into the line 
 fraction of the task object, holds, and slides out. Every perturbed rollout is paired with a clean rollout from the
 identical initial state, and results are reported with bootstrap 95% confidence intervals.
 
-> **Status: v0.3.** Two robots: the Franka Panda from MuJoCo Menagerie (fetched at runtime) and a simple gantry. On the
-> Warp path, occluder placement, calibration, coverage and success run as Warp kernels; IK is still batched NumPy on the
-> host. An OpenVLA-OFT adapter is included (tested in CI in mock mode only). Everything is tested on CPU and on Warp's CPU
-> device. **No NVIDIA GPU numbers yet** and **no VLA has been evaluated yet**: run
+> **Status: v0.4.** Two robots: the Franka Panda from MuJoCo Menagerie (fetched at runtime) and a simple gantry. On the
+> Warp path, occluder placement, calibration, coverage, success **and the robots' IK** run as Warp kernels. An
+> OpenVLA-OFT adapter is included (its `oft` backend checked against the openvla-oft source, but tested in CI only with
+> mocks), plus a scripted-demo generator for fine-tuning, frozen v1 seed sets (16 cells × 1,024 pairs) and a leaderboard
+> builder. Everything is tested on CPU and on Warp's CPU device. **No NVIDIA GPU numbers yet**, **no VLA has been
+> evaluated yet** and the [leaderboard](results/leaderboard.md) is empty: run
 > [`scripts/brev_run.sh`](#gpu-runs-nvidia-brev-h100--a100) to produce GPU numbers. See [Roadmap](#roadmap).
 
 ![clean vs occluded](docs/images/grid.png)
@@ -52,7 +54,7 @@ Most VLA benchmarks already feed policies cameras plus proprioception, so "camer
 
 | `robot=` | Model | Action `(N, dim)` | Notes |
 |---|---|---|---|
-| `"panda"` | Franka Emika Panda from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie/tree/main/franka_emika_panda), **Apache-2.0**, fetched at runtime and not vendored | 7: tcp xyz + roll/pitch/yaw (world, rad; `(pi, 0, yaw)` = gripper down) + grip in [-1, 1] | Batched damped-least-squares IK to the 7 joint position actuators, with a null-space posture term. The Menagerie gripper actuator is unchanged. |
+| `"panda"` | Franka Emika Panda from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie/tree/main/franka_emika_panda), **Apache-2.0**, fetched at runtime and not vendored | 7: tcp xyz + roll/pitch/yaw (world, rad; `(pi, 0, yaw)` = gripper down) + grip in [-1, 1] | Batched damped-least-squares IK to the 7 joint position actuators, with a null-space posture term (Warp kernel on the Warp path, NumPy otherwise). The Menagerie gripper actuator is unchanged. |
 | `"gantry"` (default) | Self-authored Cartesian x/y/z gantry with a parallel gripper | 4: tcp xyz + grip | Fast and simple; used by the CPU CI tests. |
 
 The Panda is fetched on first use: a sparse git checkout of Menagerie at a pinned commit (`occlubench/menagerie.py`) into
@@ -169,14 +171,31 @@ What runs where on the Warp path, per control step:
   onset calibration by bisection), writes its mocap pose into Warp Data and accumulates two-camera coverage; another
   tracks success. These reach the host only when `env.success_step`, `env.coverage_stats()` or an `info` value is read.
   Parity with the NumPy reference is tested (`tests/test_warp_ops.py`).
-* **Still copied each step, for IK on the host:** qpos, tcp pose, and the tcp Jacobian (Panda), plus cube/camera poses
-  for `privileged()`/`camera_calibration()`. **ctrl goes back to the device.**
-* **Images are copied to the host only when observations are built**, because policies currently run on the host.
-  A Warp IK kernel and on-device policies (for example torch over DLPack) are next.
+* **IK stays on the device** (`occlubench/warp_ik.py`): the gantry mapping and the Panda damped-least-squares step
+  (in-kernel 6×6 Cholesky) read qpos, the tcp pose and the tcp Jacobian from Warp Data and write `ctrl` in place.
+  The per-step upload is just the `(N, action_dim)` action. Parity with the NumPy IK is tested (`tests/test_warp_ik.py`,
+  gantry < 1e-5, Panda < 2e-4).
+* **Still copied each step, because policies run on the host:** whatever the observation needs (the rendered images,
+  qpos/tcp pose for `proprio` and `eef_state`). Simulator state is read lazily, so cube/camera poses are copied only
+  when `privileged()`/`camera_calibration()` or CPU rendering asks for them. On-device policies (for example torch over
+  DLPack) would remove the rest; not done yet.
 
 Measured on a CPU-only box (no GPU), CPU backend: gantry ~23 env-steps/s with two 96×96 CPU-rendered cameras. Physics
 only: gantry ~1,000 env-steps/s and Panda ~3,400 env-steps/s at 64 envs. CPU OSMesa rendering of the Panda meshes is
-slow (~4 env-steps/s). No GPU numbers have been measured yet.
+slow (~4 env-steps/s). No GPU numbers have been measured yet, including for the v0.4 device IK.
+
+## Demonstrations, seed sets and the leaderboard
+
+* **Demos for fine-tuning:** `python scripts/generate_demos.py --out data/demos_panda --robot panda --episodes 500`
+  rolls out the scripted oracle in batches and writes a LeRobot-v2-like dataset (`meta/info.json`,
+  `meta/episodes.jsonl`, `data/episode_*.npz`) with both cameras, the 8-D LIBERO-layout `eef_state`, OpenVLA-OFT-style
+  delta actions (gripper 1 = open) and the absolute actions. Demo seeds start at 1,000,000, disjoint from evaluation
+  seeds. Converting to RLDS/TFDS for openvla-oft's fine-tuning script is not written yet.
+* **Frozen seed sets (v1):** `occlubench/seedsets_v1/` has one file per cell of the 2 cameras × 2 severities × 2 onsets
+  × 2 anchors grid, 1,024 seeds (pairs) each, with a SHA-256 manifest (`occlubench.seedsets.load(cell)` verifies it).
+* **Leaderboard:** `python scripts/run_benchmark.py --policy <p> --robot <r> --out results/<name>.json` runs the frozen
+  cells and writes an `occlubench-results-v1` file; `python scripts/build_leaderboard.py` rebuilds
+  [`results/leaderboard.md`](results/leaderboard.md). It has no entries yet.
 
 ## Scene
 
@@ -209,17 +228,21 @@ CI (GitHub Actions) runs ruff, the CPU tests, the Panda tests and the Warp-backe
       IK; per-step leakage tracking; `brev_run.sh`.
 - [x] v0.3: Warp kernels for occluder placement, calibration, coverage and success (NumPy fallback, parity tests);
       OpenVLA-OFT adapter (hf / oft / mock backends); Panda oracle fixed (256/256 on CPU).
+- [x] v0.4: Warp IK kernels (gantry + Panda DLS, parity tests), lazy state readback, Panda contact buffers sized
+      (no nefc overflow); OpenVLA-OFT `oft` backend checked against the openvla-oft source, real `eef_state`
+      (axis-angle orientation); scripted-demo generator; frozen v1 seed sets; leaderboard builder.
 - [ ] **GPU numbers:** run `brev_run.sh` on an H100/A100 and publish throughput and memory against `n_envs` and resolution.
-- [ ] **Fully on-device step:** a Warp IK kernel; on-device policies via DLPack; optional Warp-segmentation coverage.
+- [ ] **Fully on-device step:** on-device policies via DLPack; optional Warp-segmentation coverage.
 - [ ] **First VLA numbers:** run the OpenVLA-OFT adapter end to end on a GPU, zero-shot and after fine-tuning.
 - [ ] **More tasks:** LIBERO-style tasks for the Panda (drawer, stacking); joint torque or OSC control modes.
 - [ ] **Occluder families:** world-fixed occluders (for example a person or arm passing by), moving clutter, and partial
       transparency. Static (LIBERO-Occ-style) and dropout (MAIL-Bench-style) controls are included for comparison.
-- [ ] **Demos:** a GPU scripted-demo generator, including occlusion-during-demo variants, exported to LeRobot/RLDS.
+- [ ] **Demos:** run the demo generator on GPU at scale, occlusion-during-demo variants, and an RLDS/TFDS exporter for
+      openvla-oft fine-tuning.
 - [ ] **Baselines:** OpenVLA-OFT and pi0/pi0.5 fine-tuned on OccluBench demos, plus wrist-only and third-person-only
       ablations.
-- [ ] **Protocol and leaderboard:** frozen seed sets, ≥1,000 pairs per cell, a JSONL results schema, and a hosted
-      leaderboard.
+- [ ] **Protocol and leaderboard:** first complete v1 entries (reference policies, then VLAs) and a hosted
+      leaderboard. (Frozen seed sets, results schema and the Markdown builder are done.)
 - [ ] **Validation:** CPU MuJoCo vs MuJoCo Warp parity on success rates, and a small real-robot occlusion study.
 
 ## Citation
