@@ -6,6 +6,8 @@ Seed set v1: 16 cells (2 cameras × 2 severities × 2 onsets × 2 anchors), 1,02
 
 | # | policy | robot | clean SR | occluded SR | paired drop [95% CI] | drop 3rd-person | drop wrist | worst cell (drop) | pairs | status | sim | commit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| – | *no results yet* | | | | | | | | | | | |
+| 1 | oracle | gantry | 1.000 | 1.000 | +0.000 [+0.000, +0.000] | +0.000 | +0.000 | third_person_sev0.50_on0.15_dur0.25 (+0.000) | 16384 | complete | cpu/none | dac8338 |
+| 2 | blind | gantry | 0.038 | 0.038 | +0.000 [+0.000, +0.000] | +0.000 | +0.000 | third_person_sev0.50_on0.15_dur0.25 (+0.000) | 16384 | complete | cpu/none | dac8338 |
+| 3 | random | gantry | 0.002 | 0.002 | +0.000 [+0.000, +0.000] | +0.000 | +0.000 | third_person_sev0.50_on0.15_dur0.25 (+0.000) | 16384 | complete | cpu/none | dac8338 |
 
 Reference policies (`oracle` uses privileged state; `colorcue` is a pixel heuristic) are sanity checks, not competitors.

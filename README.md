@@ -224,12 +224,24 @@ CPU-only box, CPU backend: physics only, gantry ~1,000 and Panda ~3,400 env-step
   rolls out the scripted oracle in batches and writes a LeRobot-v2-like dataset (`meta/info.json`,
   `meta/episodes.jsonl`, `data/episode_*.npz`) with both cameras, the 8-D LIBERO-layout `eef_state`, OpenVLA-OFT-style
   delta actions (gripper 1 = open) and the absolute actions. Demo seeds start at 1,000,000, disjoint from evaluation
-  seeds. Converting to RLDS/TFDS for openvla-oft's fine-tuning script is not written yet.
+  seeds. `--occluded-frac 0.3` runs that fraction of episodes under training occlusions whose severities/onsets differ
+  from the v1 evaluation cells.
+* **RLDS for openvla-oft:** `python scripts/convert_rlds.py --demos data/demos_panda --out datasets/rlds` writes a TFDS
+  dataset laid out like openvla-oft's LIBERO RLDS sets; `python scripts/patch_openvla_oft.py <openvla-oft>` registers
+  it (`occlubench_libero`) so the LIBERO config and transform apply. Needs `pip install -e ".[rlds]"` and must run in a
+  process without MuJoCo (TensorFlow and MuJoCo crash together).
+* **Fine-tuning recipe:** [`scripts/brev_finetune.sh`](scripts/brev_finetune.sh) does demos → RLDS → OpenVLA-OFT LoRA
+  (L1 head, two cameras + proprio) → evaluation on the v1 cells, on one L40S/A100/H100. The model is served by
+  openvla-oft's `deploy.py` and OccluBench queries it with `OpenVLAOFTPolicy(backend="server")`. **Not yet run on a
+  GPU**; memory use at batch 4 on an L40S is an estimate.
 * **Frozen seed sets (v1):** `occlubench/seedsets_v1/` has one file per cell of the 2 cameras × 2 severities × 2 onsets
   × 2 anchors grid, 1,024 seeds (pairs) each, with a SHA-256 manifest (`occlubench.seedsets.load(cell)` verifies it).
 * **Leaderboard:** `python scripts/run_benchmark.py --policy <p> --robot <r> --out results/<name>.json` runs the frozen
   cells and writes an `occlubench-results-v1` file; `python scripts/build_leaderboard.py` rebuilds
-  [`results/leaderboard.md`](results/leaderboard.md). It has no entries yet.
+  [`results/leaderboard.md`](results/leaderboard.md). Current entries: oracle, blind and random on the gantry, all 16
+  cells × 1,024 pairs, CPU physics without rendering (none of them looks at pixels). As expected, all three have a
+  paired drop of exactly 0; clean success is 1.000 / 0.038 / 0.002. Pieces run in parallel can be merged with
+  `run_benchmark.py --merge`.
 
 ## Scene
 
@@ -272,8 +284,7 @@ CI (GitHub Actions) runs ruff, the CPU tests, the Panda tests and the Warp-backe
 - [ ] **More tasks:** LIBERO-style tasks for the Panda (drawer, stacking); joint torque or OSC control modes.
 - [ ] **Occluder families:** world-fixed occluders (for example a person or arm passing by), moving clutter, and partial
       transparency. Static (LIBERO-Occ-style) and dropout (MAIL-Bench-style) controls are included for comparison.
-- [ ] **Demos:** run the demo generator on GPU at scale, occlusion-during-demo variants, and an RLDS/TFDS exporter for
-      openvla-oft fine-tuning.
+- [ ] **Demos:** run the demo generator and `brev_finetune.sh` on a GPU at scale.
 - [ ] **Baselines:** OpenVLA-OFT and pi0/pi0.5 fine-tuned on OccluBench demos, plus wrist-only and third-person-only
       ablations.
 - [ ] **Protocol and leaderboard:** first complete v1 entries (reference policies, then VLAs) and a hosted
