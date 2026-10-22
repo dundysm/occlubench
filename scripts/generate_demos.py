@@ -23,6 +23,9 @@ def main():
     p.add_argument("--physics", default="cpu")
     p.add_argument("--render", default="cpu")
     p.add_argument("--keep-failures", action="store_true")
+    p.add_argument(
+        "--occluded-frac", type=float, default=0.0, help="fraction of episodes run under a training occlusion"
+    )
     a = p.parse_args()
     info = generate(
         a.out,
@@ -34,6 +37,7 @@ def main():
         physics=a.physics,
         render=a.render,
         keep_failures=a.keep_failures,
+        occluded_frac=a.occluded_frac,
     )
     print(json.dumps(info, indent=2))
 

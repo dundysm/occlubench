@@ -22,12 +22,15 @@ mkdir -p "$OUT"
 echo "== system" | tee "$OUT/log.txt"
 nvidia-smi | tee -a "$OUT/log.txt" || { echo "nvidia-smi not found: is this a GPU instance?"; exit 1; }
 
-if ! dpkg -s libegl1 >/dev/null 2>&1; then
-  sudo apt-get update -y && sudo apt-get install -y libegl1 libgl1 libosmesa6 git || true
+NEED=""
+for pkg in libegl1 libgl1 libosmesa6 git; do dpkg -s "$pkg" >/dev/null 2>&1 || NEED="$NEED $pkg"; done
+"$PYTHON" -c "import ensurepip" >/dev/null 2>&1 || NEED="$NEED python3-venv $("$PYTHON" -c 'import sys;print(f"python{sys.version_info[0]}.{sys.version_info[1]}-venv")')"
+if [ -n "$NEED" ]; then
+  sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $NEED || true
 fi
 
 echo "== venv" | tee -a "$OUT/log.txt"
-"$PYTHON" -m venv .venv
+[ -x .venv/bin/python ] || { rm -rf .venv; "$PYTHON" -m venv .venv; }
 # shellcheck disable=SC1091
 source .venv/bin/activate
 pip install -q --upgrade pip
