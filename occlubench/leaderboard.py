@@ -67,6 +67,34 @@ def run_benchmark(
     )
 
 
+def merge_results(results: list[dict]) -> dict:
+    """Merge results of one policy/robot run in pieces (for example one process per cell group).
+    Needs the per-pair records. ``complete`` is recomputed from the merged cells and seed counts."""
+    if not results:
+        raise ValueError("nothing to merge")
+    keys = ("policy", "robot", "seedset", "physics", "render", "image_size", "horizon")
+    for r in results[1:]:
+        for k in keys:
+            if r.get(k) != results[0].get(k):
+                raise ValueError(f"cannot merge results that differ in {k!r}")
+    if any(not r.get("records") for r in results):
+        raise ValueError("merging needs the per-pair records (run without --no-records)")
+    records = [x for r in results for x in r["records"]]
+    by_cell: dict[str, set] = {}
+    for x in records:
+        by_cell.setdefault(x["condition"], set()).add(x["seed"])
+    full = {n: set(seedsets.load(n)[1]) for n in seedsets.cell_names()}
+    complete = set(by_cell) == set(full) and all(by_cell[n] == full[n] for n in full)
+    out = dict(results[0])
+    out.update(
+        rows=_jsonable(summarize(records)),
+        records=records,
+        complete=bool(complete),
+        git_sha=",".join(sorted({r.get("git_sha", "") for r in results})),
+    )
+    return out
+
+
 def _jsonable(x):
     if isinstance(x, dict):
         return {k: _jsonable(v) for k, v in x.items()}

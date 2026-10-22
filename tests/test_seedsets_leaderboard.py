@@ -46,3 +46,15 @@ def test_benchmark_smoke_and_leaderboard(tmp_path):
 
 def test_empty_leaderboard(tmp_path):
     assert "no results yet" in build(tmp_path, tmp_path / "lb.md")
+
+
+def test_merge_results():
+    from occlubench.leaderboard import merge_results
+
+    names = seedsets.cell_names()[:2]
+    parts = [
+        run_benchmark("oracle", ScriptedOracle, cells=[n], max_seeds=2, n_envs=2, horizon=160, render="none")
+        for n in names
+    ]
+    m = merge_results(parts)
+    assert len(m["rows"]) == 2 and len(m["records"]) == 4 and not m["complete"]

@@ -29,8 +29,17 @@ def main():
     p.add_argument("--physics", default="cpu")
     p.add_argument("--render", default="cpu")
     p.add_argument("--no-records", action="store_true", help="omit per-pair records (smaller file, no overall CI)")
+    p.add_argument("--merge", nargs="+", default=None, help="merge these results files into --out and exit")
     p.add_argument("--out", required=True)
     a = p.parse_args()
+    if a.merge:
+        from occlubench.leaderboard import merge_results
+
+        res = merge_results([json.load(open(f)) for f in a.merge])
+        with open(a.out, "w") as f:
+            json.dump(res, f)
+        print(f"merged {len(a.merge)} files into {a.out} (complete={res['complete']}, cells={len(res['rows'])})")
+        return
     res = run_benchmark(
         a.policy,
         POLICIES[a.policy],
