@@ -49,4 +49,10 @@ jobs:
         with: { python-version: "3.12" }
       - run: sudo apt-get update && sudo apt-get install -y libosmesa6
       - run: pip install -e ".[dev,warp]"
-      - run: pytest -q tests/test_warp_backend.py tests/test_warp_ops.py
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/occlubench
+          key: menagerie-${{ hashFiles('occlubench/menagerie.py') }}
+      - run: pytest -q tests/test_warp_backend.py tests/test_warp_ops.py tests/test_warp_ik.py
+      - run: python -m occlubench.menagerie
+      - run: pytest -q -m panda -o addopts= -k device_ik tests/test_panda.py
